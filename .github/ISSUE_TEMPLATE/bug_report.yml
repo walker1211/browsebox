@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible browsebox bug
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, subscription URLs, proxy credentials, private node names, local config files, or token-bearing logs.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Minimal commands or steps using placeholders for private values.
+      placeholder: |
+        1. Run `browsebox groups`
+        2. Run `browsebox nodes --group "<group>"`
+        3. Run `browsebox run --group "<group>" --node "<node>"`
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: commit SHA or release version
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: macOS version, Go version, Clash Verge Rev/mihomo version, Chrome version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or output
+      description: Paste only sanitized output. Replace private values with placeholders.

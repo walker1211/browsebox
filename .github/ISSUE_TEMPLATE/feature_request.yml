@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement for browsebox
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Do not include secrets, subscription URLs, proxy credentials, private node names, or local config files.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should browsebox do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety considerations
+      description: Note any effects on the main mihomo controller, temporary proxy, Chrome profile, runtime files, or credentials.
