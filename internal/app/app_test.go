@@ -66,6 +66,7 @@ func TestStartRequiresNodeBeforeReadingConfigOrState(t *testing.T) {
 }
 
 func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T) {
+	disableLocalPortCheck(t)
 	var selectedBody string
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -194,7 +195,15 @@ func (nopProcess) Signal(os.Signal) error { return nil }
 func (nopProcess) Kill() error            { return nil }
 func (nopProcess) Wait() error            { return nil }
 
+func disableLocalPortCheck(t *testing.T) {
+	t.Helper()
+	oldCheckLocalPorts := checkLocalPorts
+	checkLocalPorts = func(...int) error { return nil }
+	t.Cleanup(func() { checkLocalPorts = oldCheckLocalPorts })
+}
+
 func TestStartSavesStateAndPrintsEndpointsWithoutStoppingProcesses(t *testing.T) {
+	disableLocalPortCheck(t)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
@@ -310,8 +319,10 @@ func TestStartRefusesExistingSessionState(t *testing.T) {
 	if err == nil {
 		t.Fatal("Start returned nil error, want existing-session error")
 	}
-	if !strings.Contains(err.Error(), "session already exists") {
-		t.Fatalf("Start error = %q, want existing-session message", err.Error())
+	for _, want := range []string{"session already exists", "browsebox status", "browsebox stop"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Start error = %q, want %q", err.Error(), want)
+		}
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q, want no output", stdout.String(), stderr.String())
@@ -374,6 +385,76 @@ func TestStatusReportsMissingAndExistingSession(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestStatusReportsRecordedProcessLiveness(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := state.Save(stateDir, state.Session{ManagedBy: "browsebox", MihomoPID: 1111, ChromePID: 2222}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	oldProcessAlive := processAlive
+	processAlive = func(pid int) (bool, error) {
+		switch pid {
+		case 1111:
+			return true, nil
+		case 2222:
+			return false, nil
+		default:
+			t.Fatalf("unexpected liveness check for pid %d", pid)
+			return false, nil
+		}
+	}
+	t.Cleanup(func() { processAlive = oldProcessAlive })
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.StateDir = stateDir
+
+	if err := application.Status(context.Background(), opts); err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"Mihomo PID: 1111 (alive)", "Chrome PID: 2222 (not running)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunReportsUnavailableLocalPortBeforeReadingConfig(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on busy port: %v", err)
+	}
+	defer listener.Close()
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split busy port: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse busy port: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.SourceConfigPath = filepath.Join(t.TempDir(), "missing.yaml")
+	opts.DefaultNode = "node-a"
+	opts.ProxyPort = port
+
+	err = application.Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Run returned nil error, want unavailable-port error")
+	}
+	if !strings.Contains(err.Error(), "check local ports") || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("Run error = %q, want unavailable-port context", err.Error())
+	}
+	if strings.Contains(err.Error(), "read source config") {
+		t.Fatalf("Run error = %q, port check should happen before reading config", err.Error())
+	}
 }
 
 func TestStopMissingSessionPrintsNoSession(t *testing.T) {
@@ -771,6 +852,7 @@ func (p *recordingProcess) Kill() error            { p.killed = true; return nil
 func (p *recordingProcess) Wait() error            { return nil }
 
 func TestRunRemovesOnlyCreatedRuntimeChildWhenRuntimeDirBaseProvided(t *testing.T) {
+	disableLocalPortCheck(t)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
@@ -857,6 +939,7 @@ func TestRunRemovesOnlyCreatedRuntimeChildWhenRuntimeDirBaseProvided(t *testing.
 }
 
 func TestRunKeepsRuntimeDirWhenKeepIsTrue(t *testing.T) {
+	disableLocalPortCheck(t)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -159,6 +160,7 @@ var (
 		}
 		return false, err
 	}
+	checkLocalPorts     = ensureLocalPortsAvailable
 	currentProcessOwner = func() (string, error) {
 		return strconv.Itoa(os.Geteuid()), nil
 	}
@@ -276,7 +278,7 @@ func (a *App) Start(ctx context.Context, opts Options) error {
 	}
 
 	if _, err := state.Load(opts.StateDir); err == nil {
-		return fmt.Errorf("session already exists at %s; run status or stop before starting another session", state.Path(opts.StateDir))
+		return fmt.Errorf("session already exists at %s; run `browsebox status` or `browsebox stop` before starting another session", state.Path(opts.StateDir))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("load session state: %w", err)
 	}
@@ -360,6 +362,10 @@ type startedSession struct {
 }
 
 func startSession(processCtx, controlCtx context.Context, opts Options) (startedSession, error) {
+	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
+		return startedSession{}, fmt.Errorf("check local ports: %w", err)
+	}
+
 	sourceConfig, err := readFile(opts.SourceConfigPath)
 	if err != nil {
 		return startedSession{}, fmt.Errorf("read source config: %w", err)
@@ -453,6 +459,27 @@ func requireNode(opts Options) error {
 	return nil
 }
 
+func ensureLocalPortsAvailable(ports ...int) error {
+	seen := make(map[int]bool, len(ports))
+	for _, port := range ports {
+		if port <= 0 {
+			return fmt.Errorf("invalid port %d", port)
+		}
+		if seen[port] {
+			continue
+		}
+		seen[port] = true
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return fmt.Errorf("127.0.0.1:%d is unavailable: %w", port, err)
+		}
+		if err := listener.Close(); err != nil {
+			return fmt.Errorf("release 127.0.0.1:%d probe: %w", port, err)
+		}
+	}
+	return nil
+}
+
 func createRuntimeDir(baseDir string) (string, error) {
 	if baseDir == "" {
 		return os.MkdirTemp("", fmt.Sprintf("browsebox-%d-", os.Getpid()))
@@ -506,11 +533,25 @@ func (a *App) printRunEndpoints(opts Options, controllerURL, runtimeDir string) 
 	return nil
 }
 
+func processStatusText(pid int) string {
+	if pid <= 0 {
+		return "not recorded"
+	}
+	alive, err := processAlive(pid)
+	if err != nil {
+		return "unknown"
+	}
+	if alive {
+		return "alive"
+	}
+	return "not running"
+}
+
 func (a *App) printSessionStatus(session state.Session) error {
 	lines := []string{
 		"Browsebox session recorded:",
-		fmt.Sprintf("Mihomo PID: %d", session.MihomoPID),
-		fmt.Sprintf("Chrome PID: %d", session.ChromePID),
+		fmt.Sprintf("Mihomo PID: %d (%s)", session.MihomoPID, processStatusText(session.MihomoPID)),
+		fmt.Sprintf("Chrome PID: %d (%s)", session.ChromePID, processStatusText(session.ChromePID)),
 		fmt.Sprintf("Proxy: http://127.0.0.1:%d", session.ProxyPort),
 		fmt.Sprintf("Controller: http://127.0.0.1:%d", session.ControllerPort),
 		fmt.Sprintf("DevTools: http://127.0.0.1:%d", session.DevToolsPort),
