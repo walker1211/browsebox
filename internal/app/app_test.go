@@ -151,6 +151,7 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 	opts.ControllerPort = controllerPort
 	opts.DevToolsPort = 9333
 	opts.TargetURL = "https://example.com/start"
+	opts.HealthURLs = nil
 
 	if err := application.Run(ctx, opts); err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -263,6 +264,7 @@ func TestStartSavesStateAndPrintsEndpointsWithoutStoppingProcesses(t *testing.T)
 	opts.ControllerPort = controllerPort
 	opts.DevToolsPort = 9333
 	opts.TargetURL = "https://example.com/start"
+	opts.HealthURLs = nil
 
 	if err := application.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start returned error: %v", err)
@@ -420,6 +422,155 @@ func TestStatusReportsRecordedProcessLiveness(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunChecksHealthURLsBeforeLaunchingChrome(t *testing.T) {
+	disableLocalPortCheck(t)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["node-a"],"now":"node-a"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/proxies/node-a/delay":
+			if got := r.URL.Query().Get("url"); got != "https://health.example/ping" {
+				t.Fatalf("health url query = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":123}`))
+		default:
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(controller.Close)
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(controller.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split controller URL: %v", err)
+	}
+	controllerPort, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse controller port: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.yaml")
+	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+
+	oldStartProcess := startMihomoProcess
+	oldStartChrome := startChrome
+	t.Cleanup(func() {
+		startMihomoProcess = oldStartProcess
+		startChrome = oldStartChrome
+	})
+	startMihomoProcess = func(ctx context.Context, binaryPath, dir, configPath string) (process, error) {
+		return nopProcess{}, nil
+	}
+	chromeStarted := false
+	ctx, cancel := context.WithCancel(context.Background())
+	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		chromeStarted = true
+		cancel()
+		return nopProcess{}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.SourceConfigPath = sourcePath
+	opts.MihomoBinaryPath = "/bin/mihomo"
+	opts.ChromeBinaryPath = "/bin/chrome"
+	opts.Group = "All"
+	opts.DefaultNode = "node-a"
+	opts.ControllerPort = controllerPort
+	opts.HealthURLs = []string{"https://health.example/ping"}
+
+	if err := application.Run(ctx, opts); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !chromeStarted {
+		t.Fatal("Run did not launch Chrome after passing health check")
+	}
+}
+
+func TestRunStopsBeforeLaunchingChromeWhenHealthCheckFails(t *testing.T) {
+	disableLocalPortCheck(t)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["node-a"],"now":"node-a"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/proxies/node-a/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(controller.Close)
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(controller.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split controller URL: %v", err)
+	}
+	controllerPort, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse controller port: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.yaml")
+	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	runtimeBaseDir := filepath.Join(tempDir, "runtime")
+
+	mihomoProc := &recordingProcess{pid: 1111}
+	oldStartProcess := startMihomoProcess
+	oldStartChrome := startChrome
+	t.Cleanup(func() {
+		startMihomoProcess = oldStartProcess
+		startChrome = oldStartChrome
+	})
+	var runtimeDir string
+	startMihomoProcess = func(ctx context.Context, binaryPath, dir, configPath string) (process, error) {
+		runtimeDir = dir
+		return mihomoProc, nil
+	}
+	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		t.Fatal("Chrome should not start when health check fails")
+		return nil, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.SourceConfigPath = sourcePath
+	opts.RuntimeDir = runtimeBaseDir
+	opts.MihomoBinaryPath = "/bin/mihomo"
+	opts.ChromeBinaryPath = "/bin/chrome"
+	opts.Group = "All"
+	opts.DefaultNode = "node-a"
+	opts.ControllerPort = controllerPort
+	opts.HealthURLs = []string{"https://health.example/ping"}
+
+	err = application.Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Run returned nil error, want health-check error")
+	}
+	if !strings.Contains(err.Error(), "health check") || !strings.Contains(err.Error(), "https://health.example/ping") {
+		t.Fatalf("Run error = %q, want health-check context", err.Error())
+	}
+	if !mihomoProc.signaled {
+		t.Fatal("temporary mihomo process was not stopped after health-check failure")
+	}
+	if _, err := os.Stat(runtimeDir); !os.IsNotExist(err) {
+		t.Fatalf("runtime dir still exists after health-check failure or stat failed: %v", err)
 	}
 }
 
@@ -923,6 +1074,7 @@ func TestRunRemovesOnlyCreatedRuntimeChildWhenRuntimeDirBaseProvided(t *testing.
 	opts.Group = "All"
 	opts.DefaultNode = "node-a"
 	opts.ControllerPort = controllerPort
+	opts.HealthURLs = nil
 
 	if err := application.Run(ctx, opts); err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -998,6 +1150,7 @@ func TestRunKeepsRuntimeDirWhenKeepIsTrue(t *testing.T) {
 	opts.Group = "All"
 	opts.DefaultNode = "node-a"
 	opts.ControllerPort = controllerPort
+	opts.HealthURLs = nil
 
 	if err := application.Run(ctx, opts); err != nil {
 		t.Fatalf("Run returned error: %v", err)

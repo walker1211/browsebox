@@ -110,7 +110,7 @@ Common configuration options:
 - `--mihomo <path>`: mihomo executable path.
 - `--chrome <path>`: Google Chrome executable path.
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
-- `--health-url <url>`: node delay check URL; repeat the flag to set multiple URLs.
+- `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 
 ## Safety notes
 

@@ -415,6 +415,9 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	if selectErr != nil {
 		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", opts.DefaultNode, opts.Group, selectErr)
 	}
+	if err := checkHealthURLs(controlCtx, tempClient, opts.DefaultNode, opts.HealthURLs); err != nil {
+		return startedSession{}, err
+	}
 
 	profileDir := filepath.Join(runtimeDir, "chrome-profile")
 	chromeProcess, err := startChrome(processCtx, opts.ChromeBinaryPath, browser.Options{
@@ -488,6 +491,25 @@ func createRuntimeDir(baseDir string) (string, error) {
 		return "", err
 	}
 	return os.MkdirTemp(baseDir, "browsebox-*")
+}
+
+func checkHealthURLs(ctx context.Context, client *mihomo.Client, node string, healthURLs []string) error {
+	for _, healthURL := range healthURLs {
+		trimmedURL := strings.TrimSpace(healthURL)
+		if trimmedURL == "" {
+			continue
+		}
+		healthCtx, cancelHealth := context.WithTimeout(ctx, controllerDelayTimeout)
+		delay, err := client.Delay(healthCtx, node, trimmedURL, 5000)
+		cancelHealth()
+		if err != nil {
+			return fmt.Errorf("health check %q through node %q: %w", trimmedURL, sanitizeDisplayName(node), err)
+		}
+		if delay.Error != "" {
+			return fmt.Errorf("health check %q through node %q: %s", trimmedURL, sanitizeDisplayName(node), delay.Error)
+		}
+	}
+	return nil
 }
 
 func waitControllerReady(ctx context.Context, client *mihomo.Client, group string) error {

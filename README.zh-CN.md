@@ -110,7 +110,7 @@ go run ./cmd/browsebox --help
 - `--mihomo <path>`：mihomo 可执行文件路径。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
-- `--health-url <url>`：节点测速 URL，可重复传入。
+- `--health-url <url>`：启动 `run` / `start` 前通过临时 mihomo 检查所选节点的 URL，可重复传入；任一检查失败会停止启动并清理临时资源。
 
 ## 安全说明
 
