@@ -31,9 +31,10 @@ go run ./cmd/browsebox --help
 
 ## 快速开始
 
-最小路径：先查看节点，再选择一个节点启动隔离浏览器会话。
+最小路径：先查看代理组，再查看节点，最后选择一个节点启动隔离浏览器会话。
 
 ```bash
+./browsebox groups
 ./browsebox nodes --group "<group>"
 ./browsebox run --group "<group>" --node "<node>"
 ```
@@ -45,6 +46,12 @@ go run ./cmd/browsebox --help
 ```
 
 ## 命令示例
+
+列出代理组：
+
+```bash
+./browsebox groups
+```
 
 列出节点及健康状态：
 

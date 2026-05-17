@@ -20,6 +20,7 @@ func TestHelpPrintsUsageAndCommands(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"browsebox launches isolated proxy-routed browser sessions.",
+		"groups",
 		"nodes",
 		"run",
 		"start",
@@ -44,7 +45,7 @@ func TestUnknownCommandPrintsErrorAndUsage(t *testing.T) {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 	errOut := stderr.String()
-	for _, want := range []string{"unknown command \"nope\"", "Usage:", "nodes"} {
+	for _, want := range []string{"unknown command \"nope\"", "Usage:", "groups", "nodes"} {
 		if !strings.Contains(errOut, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, errOut)
 		}

@@ -31,9 +31,10 @@ go run ./cmd/browsebox --help
 
 ## Quick Start
 
-Minimal golden path: list nodes, then launch an isolated browser session with one selected node.
+Minimal golden path: list proxy groups, list nodes, then launch an isolated browser session with one selected node.
 
 ```bash
+./browsebox groups
 ./browsebox nodes --group "<group>"
 ./browsebox run --group "<group>" --node "<node>"
 ```
@@ -45,6 +46,12 @@ Show help:
 ```
 
 ## Command examples
+
+List proxy groups:
+
+```bash
+./browsebox groups
+```
 
 List nodes and health status:
 

@@ -20,6 +20,7 @@ Usage:
   browsebox --help
 
 Commands:
+  groups   List available proxy groups
   nodes    List available proxy nodes
   run      Launch a temporary isolated browser session
   start    Start a persistent isolated browser session
@@ -106,6 +107,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func dispatch(ctx context.Context, application *app.App, command string, opts app.Options) error {
 	switch command {
+	case "groups":
+		return application.Groups(ctx, opts)
 	case "nodes":
 		return application.Nodes(ctx, opts)
 	case "run":
@@ -123,7 +126,7 @@ func dispatch(ctx context.Context, application *app.App, command string, opts ap
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "nodes", "run", "start", "status", "stop":
+	case "groups", "nodes", "run", "start", "status", "stop":
 		return true
 	default:
 		return false

@@ -71,6 +71,35 @@ func TestNewTCPClientGetJSONUsesTCPBaseURL(t *testing.T) {
 	}
 }
 
+func TestProxyGroupsListsGroupEntriesSortedByName(t *testing.T) {
+	socketPath := startUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/proxies" {
+			t.Fatalf("path = %q, want /proxies", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"proxies":{"node-a":{"name":"node-a","type":"Shadowsocks"},"group-b":{"name":"group-b","type":"Selector","all":["node-a"]},"group-a":{"type":"URLTest","all":["node-b","node-c"]}}}`))
+	}))
+
+	client := NewClient(socketPath)
+	groups, err := client.ProxyGroups(context.Background())
+	if err != nil {
+		t.Fatalf("ProxyGroups returned error: %v", err)
+	}
+
+	if len(groups) != 2 {
+		t.Fatalf("len(groups) = %d, want 2", len(groups))
+	}
+	if groups[0].Name != "group-a" || groups[0].Type != "URLTest" || len(groups[0].All) != 2 {
+		t.Fatalf("groups[0] = %#v", groups[0])
+	}
+	if groups[1].Name != "group-b" || groups[1].Type != "Selector" || len(groups[1].All) != 1 {
+		t.Fatalf("groups[1] = %#v", groups[1])
+	}
+}
+
 func TestSelectNodePutsNamePayloadToTCPController(t *testing.T) {
 	requests := make(chan struct {
 		method string

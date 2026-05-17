@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -132,6 +133,31 @@ func (c *Client) endpointDescription() string {
 		return c.socketPath
 	}
 	return c.baseURL
+}
+
+// ProxyGroups lists proxy group entries from the controller.
+func (c *Client) ProxyGroups(ctx context.Context) ([]ProxyGroupInfo, error) {
+	var response struct {
+		Proxies map[string]ProxyGroupInfo `json:"proxies"`
+	}
+	if err := c.GetJSON(ctx, "/proxies", &response); err != nil {
+		return nil, err
+	}
+
+	groups := make([]ProxyGroupInfo, 0, len(response.Proxies))
+	for name, group := range response.Proxies {
+		if len(group.All) == 0 {
+			continue
+		}
+		if group.Name == "" {
+			group.Name = name
+		}
+		groups = append(groups, group)
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].Name < groups[j].Name
+	})
+	return groups, nil
 }
 
 // ProxyGroup reads a proxy group by name.

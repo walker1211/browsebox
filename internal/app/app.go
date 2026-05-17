@@ -178,6 +178,28 @@ func New(stdout, stderr io.Writer) *App {
 	}
 }
 
+// Groups lists available proxy groups.
+func (a *App) Groups(ctx context.Context, opts Options) error {
+	client := mihomo.NewClient(opts.ControllerSocket)
+	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
+	groups, err := client.ProxyGroups(groupCtx)
+	cancelGroup()
+	if err != nil {
+		return fmt.Errorf("list proxy groups: %w", err)
+	}
+
+	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "GROUP\tTYPE\tNODES"); err != nil {
+		return err
+	}
+	for _, group := range groups {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%d\n", sanitizeDisplayName(group.Name), sanitizeDisplayName(group.Type), len(group.All)); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
+}
+
 // Nodes lists available proxy nodes.
 func (a *App) Nodes(ctx context.Context, opts Options) error {
 	client := mihomo.NewClient(opts.ControllerSocket)

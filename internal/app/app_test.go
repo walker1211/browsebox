@@ -1042,6 +1042,81 @@ func TestNodesReturnsWhenControllerStalls(t *testing.T) {
 	}
 }
 
+func TestGroupsListsProxyGroupsWithoutMutatingMainController(t *testing.T) {
+	requests := make(chan string, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Path != "/proxies" {
+			t.Fatalf("path = %q, want /proxies", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"proxies":{"node-a":{"name":"node-a","type":"Shadowsocks"},"group-b":{"name":"group-b","type":"Selector","all":["node-a"]},"group-a":{"type":"URLTest","all":["node-b","node-c"]}}}`))
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+
+	if err := application.Groups(context.Background(), opts); err != nil {
+		t.Fatalf("Groups returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"GROUP", "TYPE", "NODES", "group-a", "URLTest", "2", "group-b", "Selector", "1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("groups output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "node-a") {
+		t.Fatalf("groups output should not include individual node entries:\n%s", out)
+	}
+	if got := <-requests; got != "GET /proxies" {
+		t.Fatalf("request = %q, want GET /proxies", got)
+	}
+}
+
+func TestGroupsSanitizesControlCharactersInGroupNames(t *testing.T) {
+	unsafeGroup := "evil\ngroup\t\x1b[31mred\rend"
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"proxies": map[string]any{
+				unsafeGroup: map[string]any{
+					"type": "Selector",
+					"all":  []string{"node-a"},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("encode groups response: %v", err)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+
+	if err := application.Groups(context.Background(), opts); err != nil {
+		t.Fatalf("Groups returned error: %v", err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, unsafeGroup) {
+		t.Fatalf("groups output contains unsafe raw group name: %q", out)
+	}
+	if !strings.Contains(out, `evil\ngroup\t\x1b[31mred\rend`) {
+		t.Fatalf("groups output missing sanitized group name: %q", out)
+	}
+}
+
 func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 	unsafeNode := "evil\nnode\t\x1b[31mred\rend"
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
