@@ -14,6 +14,12 @@ browsebox 是一个 Go 标准库 CLI，用于通过隔离的临时 mihomo 控制
 在仓库根目录执行：
 
 ```bash
+./build.sh
+```
+
+也可以手动构建：
+
+```bash
 go build -o browsebox ./cmd/browsebox
 ```
 
@@ -85,7 +91,7 @@ go run ./cmd/browsebox --help
 常见配置项：
 
 - `--controller-socket <path>`：主 Clash Verge Rev/mihomo 控制器 Unix socket。
-- `--config <path>`：源 mihomo 配置，默认位于 `~/.config/mihomo/config.yaml`。
+- `--config <path>`：源 mihomo 配置。默认优先使用 `~/.config/mihomo/config.yaml`；不存在时会探测 Clash Verge Rev 的常见 macOS 配置位置。
 - `--runtime-dir <path>`：临时运行目录的父目录；未设置时使用系统临时目录。
 - `--state-dir <path>`：持久会话状态目录，默认位于 `~/.browsebox`。
 - `--mihomo <path>`：mihomo 可执行文件路径。

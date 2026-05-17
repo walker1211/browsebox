@@ -48,10 +48,27 @@ func DefaultOptions() Options {
 }
 
 func defaultSourceConfigPath() string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".config", "mihomo", "config.yaml")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "config.yaml"
 	}
-	return "config.yaml"
+
+	genericPath := filepath.Join(home, ".config", "mihomo", "config.yaml")
+	if fileExists(genericPath) {
+		return genericPath
+	}
+
+	clashVergePath := filepath.Join(home, "Library", "Application Support", "io.github.clash-verge-rev.clash-verge-rev", "clash-verge.yaml")
+	if fileExists(clashVergePath) {
+		return clashVergePath
+	}
+
+	return genericPath
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func defaultStateDir() string {

@@ -14,6 +14,12 @@ browsebox is a Go standard-library CLI for launching isolated, proxy-routed Goog
 From the repository root:
 
 ```bash
+./build.sh
+```
+
+You can also build manually:
+
+```bash
 go build -o browsebox ./cmd/browsebox
 ```
 
@@ -85,7 +91,7 @@ Common flags can be passed after any command:
 Common configuration options:
 
 - `--controller-socket <path>`: Unix socket for the main Clash Verge Rev/mihomo controller.
-- `--config <path>`: source mihomo config, defaulting to `~/.config/mihomo/config.yaml`.
+- `--config <path>`: source mihomo config. The default prefers `~/.config/mihomo/config.yaml`; if missing, browsebox probes the common macOS Clash Verge Rev config location.
 - `--runtime-dir <path>`: parent directory for temporary runtime directories; if omitted, the system temp directory is used.
 - `--state-dir <path>`: persistent session state directory, defaulting to `~/.browsebox`.
 - `--mihomo <path>`: mihomo executable path.
