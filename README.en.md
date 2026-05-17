@@ -59,7 +59,7 @@ List proxy groups:
 ./browsebox groups
 ```
 
-List nodes and health status:
+Check node delays concurrently; healthy nodes are sorted by ascending delay and failed nodes are listed last:
 
 ```bash
 ./browsebox nodes --group "<group>"
@@ -91,6 +91,12 @@ Stop the persistent session and clean state:
 
 ## Configuration and default locations
 
+Local structured configuration is loaded automatically from `configs/config.yaml`. Copy the non-sensitive template and adjust it as needed; command-line flags override local configuration:
+
+```bash
+cp configs/config.example.yaml configs/config.yaml
+```
+
 Common flags can be passed after any command:
 
 ```bash
@@ -110,6 +116,8 @@ Common configuration options:
 - `--mihomo <path>`: mihomo executable path.
 - `--chrome <path>`: Google Chrome executable path.
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
+- `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
+- `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 
 ## Safety notes

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1212,6 +1214,148 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("nodes output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["slow-node","dead-node","fast-node"]}`))
+		case "/proxies/slow-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":90}`))
+		case "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 3
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	fastIndex := strings.Index(out, "fast-node")
+	slowIndex := strings.Index(out, "slow-node")
+	deadIndex := strings.Index(out, "dead-node")
+	if fastIndex == -1 || slowIndex == -1 || deadIndex == -1 {
+		t.Fatalf("nodes output missing expected rows:\n%s", out)
+	}
+	if !(fastIndex < slowIndex && slowIndex < deadIndex) {
+		t.Fatalf("nodes output not sorted by healthy delay with unhealthy last:\n%s", out)
+	}
+}
+
+func TestNodesRespectsConcurrencyLimitAndDelayTimeout(t *testing.T) {
+	nodes := []string{"node-1", "node-2", "node-3", "node-4"}
+	delayRequests := make(chan struct{}, len(nodes))
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(closeRelease)
+
+	var active int32
+	var maxActive int32
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		if r.URL.Path == "/proxies/All" {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"name": "All",
+				"type": "Selector",
+				"all":  nodes,
+			}); err != nil {
+				t.Fatalf("encode group response: %v", err)
+			}
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/proxies/node-") || !strings.HasSuffix(r.URL.Path, "/delay") {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("timeout") != "1234" {
+			t.Fatalf("delay timeout = %q, want 1234", r.URL.Query().Get("timeout"))
+		}
+
+		current := atomic.AddInt32(&active, 1)
+		for {
+			maximum := atomic.LoadInt32(&maxActive)
+			if current <= maximum || atomic.CompareAndSwapInt32(&maxActive, maximum, current) {
+				break
+			}
+		}
+		delayRequests <- struct{}{}
+		<-release
+		atomic.AddInt32(&active, -1)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"delay":1}`))
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+	opts.DelayTimeoutMS = 1234
+
+	done := make(chan error, 1)
+	go func() {
+		done <- application.Nodes(context.Background(), opts)
+	}()
+
+	for range 2 {
+		select {
+		case <-delayRequests:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Nodes did not start delay checks up to the configured concurrency")
+		}
+	}
+	select {
+	case <-delayRequests:
+		t.Fatal("Nodes started more delay checks than the configured concurrency before workers were released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closeRelease()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Nodes returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Nodes did not return after releasing delay checks")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if got := atomic.LoadInt32(&maxActive); got > 2 {
+		t.Fatalf("max active delay checks = %d, want at most 2", got)
 	}
 }
 

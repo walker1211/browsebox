@@ -43,6 +43,8 @@ Flags:
   --url url                 URL to open
   --target-url url          Legacy alias for --url
   --health-url url          Health check URL; repeat to set multiple URLs
+  --nodes-concurrency n     Concurrent node delay checks
+  --delay-timeout-ms ms     Mihomo delay check timeout in milliseconds
 `
 
 func main() {
@@ -51,6 +53,12 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	opts := app.DefaultOptions()
+	if shouldLoadConfig(args) {
+		if err := app.LoadConfigFile(app.DefaultConfigPath, &opts); err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+	}
 	flags := newFlagSet("browsebox", &opts)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -124,6 +132,18 @@ func dispatch(ctx context.Context, application *app.App, command string, opts ap
 	}
 }
 
+func shouldLoadConfig(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "help" || arg == "--help" || arg == "-h" {
+			return false
+		}
+	}
+	return true
+}
+
 func isKnownCommand(command string) bool {
 	switch command {
 	case "groups", "nodes", "run", "start", "status", "stop":
@@ -157,6 +177,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.TargetURL, "url", opts.TargetURL, "URL to open")
 	flags.StringVar(&opts.TargetURL, "target-url", opts.TargetURL, "legacy alias for --url")
 	flags.Var(&healthURLFlag{values: &opts.HealthURLs}, "health-url", "health check URL; repeat to set multiple URLs")
+	flags.IntVar(&opts.NodesConcurrency, "nodes-concurrency", opts.NodesConcurrency, "concurrent node delay checks")
+	flags.IntVar(&opts.DelayTimeoutMS, "delay-timeout-ms", opts.DelayTimeoutMS, "mihomo delay check timeout in milliseconds")
 
 	return flags
 }

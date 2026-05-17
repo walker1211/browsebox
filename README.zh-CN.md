@@ -59,7 +59,7 @@ go run ./cmd/browsebox --help
 ./browsebox groups
 ```
 
-列出节点及健康状态：
+并发检测节点延迟；健康节点按延迟从低到高排序，失败节点排在最后：
 
 ```bash
 ./browsebox nodes --group "<group>"
@@ -91,6 +91,12 @@ go run ./cmd/browsebox --help
 
 ## 配置与默认位置
 
+本地结构化配置会从 `configs/config.yaml` 自动读取；可从非敏感模板复制后按需调整，命令行 flag 会覆盖本地配置：
+
+```bash
+cp configs/config.example.yaml configs/config.yaml
+```
+
 常用参数可以在任意命令后添加：
 
 ```bash
@@ -110,6 +116,8 @@ go run ./cmd/browsebox --help
 - `--mihomo <path>`：mihomo 可执行文件路径。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
+- `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。
+- `--delay-timeout-ms <ms>`：mihomo 延迟检查超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。
 - `--health-url <url>`：启动 `run` / `start` 前通过临时 mihomo 检查所选节点的 URL，可重复传入；任一检查失败会停止启动并清理临时资源。
 
 ## 安全说明

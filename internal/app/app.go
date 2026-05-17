@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -24,7 +26,6 @@ import (
 const (
 	managedByBrowsebox      = "browsebox"
 	controllerLookupTimeout = 200 * time.Millisecond
-	controllerDelayTimeout  = 6 * time.Second
 	controllerReadyTimeout  = 5 * time.Second
 	controllerReadyInterval = 25 * time.Millisecond
 	selectNodeTimeout       = 2 * time.Second
@@ -204,6 +205,10 @@ func (a *App) Groups(ctx context.Context, opts Options) error {
 
 // Nodes lists available proxy nodes.
 func (a *App) Nodes(ctx context.Context, opts Options) error {
+	if err := validateNodeTuning(opts); err != nil {
+		return err
+	}
+
 	client := mihomo.NewClient(opts.ControllerSocket)
 	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
 	group, err := client.ProxyGroup(groupCtx, opts.Group)
@@ -217,29 +222,108 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 		targetURL = opts.HealthURLs[0]
 	}
 
+	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	sortNodeDelayResults(results)
+
 	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(writer, "NODE\tSTATUS\tDELAY"); err != nil {
 		return err
 	}
-	for _, node := range group.All {
-		displayName := sanitizeDisplayName(node)
-		delayCtx, cancelDelay := context.WithTimeout(ctx, controllerDelayTimeout)
-		delay, err := client.Delay(delayCtx, node, targetURL, 5000)
-		cancelDelay()
-		if err != nil {
-			if _, writeErr := fmt.Fprintf(writer, "%s\tunhealthy\t-\n", displayName); writeErr != nil {
-				return writeErr
-			}
-			continue
-		}
-		if _, err := fmt.Fprintf(writer, "%s\tok\t%dms\n", displayName, delay.Delay); err != nil {
+	for _, result := range results {
+		if err := writeNodeDelayResult(writer, result); err != nil {
 			return err
 		}
 	}
-	if err := writer.Flush(); err != nil {
-		return err
+	return writer.Flush()
+}
+
+type nodeDelayResult struct {
+	index   int
+	name    string
+	delay   int
+	healthy bool
+}
+
+func validateNodeTuning(opts Options) error {
+	if opts.NodesConcurrency <= 0 {
+		return errors.New("--nodes-concurrency must be a positive integer")
+	}
+	return validateDelayTimeout(opts.DelayTimeoutMS)
+}
+
+func validateDelayTimeout(timeoutMS int) error {
+	if timeoutMS <= 0 {
+		return errors.New("--delay-timeout-ms must be a positive integer")
 	}
 	return nil
+}
+
+func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURL string, concurrency, timeoutMS int) []nodeDelayResult {
+	results := make([]nodeDelayResult, len(nodes))
+	if len(nodes) == 0 {
+		return results
+	}
+
+	workerCount := min(concurrency, len(nodes))
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				results[index] = checkNodeDelay(ctx, client, index, nodes[index], targetURL, timeoutMS)
+			}
+		}()
+	}
+
+	for index := range nodes {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+
+	return results
+}
+
+func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node, targetURL string, timeoutMS int) nodeDelayResult {
+	result := nodeDelayResult{index: index, name: node}
+	delayCtx, cancelDelay := context.WithTimeout(ctx, nodeDelayContextTimeout(timeoutMS))
+	delay, err := client.Delay(delayCtx, node, targetURL, timeoutMS)
+	cancelDelay()
+	if err != nil || delay.Error != "" {
+		return result
+	}
+	result.delay = delay.Delay
+	result.healthy = true
+	return result
+}
+
+func nodeDelayContextTimeout(timeoutMS int) time.Duration {
+	return time.Duration(timeoutMS)*time.Millisecond + time.Second
+}
+
+func sortNodeDelayResults(results []nodeDelayResult) {
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].healthy != results[j].healthy {
+			return results[i].healthy
+		}
+		if results[i].healthy && results[i].delay != results[j].delay {
+			return results[i].delay < results[j].delay
+		}
+		return results[i].index < results[j].index
+	})
+}
+
+func writeNodeDelayResult(w io.Writer, result nodeDelayResult) error {
+	displayName := sanitizeDisplayName(result.name)
+	if !result.healthy {
+		_, err := fmt.Fprintf(w, "%s\tunhealthy\t-\n", displayName)
+		return err
+	}
+	_, err := fmt.Fprintf(w, "%s\tok\t%dms\n", displayName, result.delay)
+	return err
 }
 
 // Run launches a temporary isolated browser session.
@@ -362,6 +446,9 @@ type startedSession struct {
 }
 
 func startSession(processCtx, controlCtx context.Context, opts Options) (startedSession, error) {
+	if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
+		return startedSession{}, err
+	}
 	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
 		return startedSession{}, fmt.Errorf("check local ports: %w", err)
 	}
@@ -415,7 +502,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	if selectErr != nil {
 		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", opts.DefaultNode, opts.Group, selectErr)
 	}
-	if err := checkHealthURLs(controlCtx, tempClient, opts.DefaultNode, opts.HealthURLs); err != nil {
+	if err := checkHealthURLs(controlCtx, tempClient, opts.DefaultNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
 		return startedSession{}, err
 	}
 
@@ -493,14 +580,14 @@ func createRuntimeDir(baseDir string) (string, error) {
 	return os.MkdirTemp(baseDir, "browsebox-*")
 }
 
-func checkHealthURLs(ctx context.Context, client *mihomo.Client, node string, healthURLs []string) error {
+func checkHealthURLs(ctx context.Context, client *mihomo.Client, node string, healthURLs []string, timeoutMS int) error {
 	for _, healthURL := range healthURLs {
 		trimmedURL := strings.TrimSpace(healthURL)
 		if trimmedURL == "" {
 			continue
 		}
-		healthCtx, cancelHealth := context.WithTimeout(ctx, controllerDelayTimeout)
-		delay, err := client.Delay(healthCtx, node, trimmedURL, 5000)
+		healthCtx, cancelHealth := context.WithTimeout(ctx, nodeDelayContextTimeout(timeoutMS))
+		delay, err := client.Delay(healthCtx, node, trimmedURL, timeoutMS)
 		cancelHealth()
 		if err != nil {
 			return fmt.Errorf("health check %q through node %q: %w", trimmedURL, sanitizeDisplayName(node), err)

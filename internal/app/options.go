@@ -24,6 +24,8 @@ type Options struct {
 	DevToolsPort     int
 	TargetURL        string
 	HealthURLs       []string
+	NodesConcurrency int
+	DelayTimeoutMS   int
 }
 
 // DefaultOptions returns safe macOS-oriented defaults for browsebox.
@@ -40,6 +42,8 @@ func DefaultOptions() Options {
 		ControllerPort:   17998,
 		DevToolsPort:     9223,
 		TargetURL:        "https://x.com/OpenAI",
+		NodesConcurrency: 16,
+		DelayTimeoutMS:   5000,
 		HealthURLs: []string{
 			"https://x.com",
 			"https://abs.twimg.com",

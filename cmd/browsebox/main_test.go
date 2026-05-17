@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/walker1211/browsebox/internal/app"
 )
 
 func TestHelpPrintsUsageAndCommands(t *testing.T) {
@@ -77,6 +79,21 @@ func TestTargetURLFlagStillWorks(t *testing.T) {
 
 	if code == 2 {
 		t.Fatalf("run returned parse error; stderr = %q", stderr.String())
+	}
+}
+
+func TestNodeTuningFlagsParse(t *testing.T) {
+	opts := app.DefaultOptions()
+	flags := newFlagSet("browsebox nodes", &opts)
+
+	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500"}); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if opts.NodesConcurrency != 32 {
+		t.Fatalf("NodesConcurrency = %d, want 32", opts.NodesConcurrency)
+	}
+	if opts.DelayTimeoutMS != 2500 {
+		t.Fatalf("DelayTimeoutMS = %d, want 2500", opts.DelayTimeoutMS)
 	}
 }
 
