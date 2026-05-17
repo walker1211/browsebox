@@ -105,7 +105,7 @@ func isolatedSetting(line string, opts RuntimeConfigOptions) (string, bool) {
 
 func unsafeTopLevelSetting(line string) bool {
 	switch settingKey(line) {
-	case "port", "socks-port", "redir-port", "tproxy-port", "external-controller-tls", "secret":
+	case "port", "socks-port", "redir-port", "tproxy-port", "external-controller-tls", "external-controller-unix", "secret":
 		return true
 	default:
 		return false
