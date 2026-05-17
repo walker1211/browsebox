@@ -17,6 +17,12 @@ From the repository root:
 ./build.sh
 ```
 
+Install to `PREFIX/bin` (`/usr/local/bin` by default):
+
+```bash
+./build.sh install
+```
+
 You can also build manually:
 
 ```bash

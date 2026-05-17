@@ -17,6 +17,12 @@ browsebox 是一个 Go 标准库 CLI，用于通过隔离的临时 mihomo 控制
 ./build.sh
 ```
 
+安装到 `PREFIX/bin`（默认 `/usr/local/bin`）：
+
+```bash
+./build.sh install
+```
+
 也可以手动构建：
 
 ```bash
