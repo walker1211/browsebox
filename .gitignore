@@ -1,0 +1,71 @@
+# Binary
+/browsebox
+/browsebox-*
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+local-credentials.*
+credentials.local.*
+
+# Local config
+configs/config.yaml
+configs/*.local.yaml
+*.local.yaml
+*.local.json
+
+# Data
+.browsebox/
+browsebox-*/
+/state/
+session.json
+.session-*.tmp
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+/bin/
+/dist/
+/build/
+/out/
+/tmp/
+coverage.out
+coverage.html
+*.coverprofile
+*.test
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+/logs/
+*.log
+*.log.*
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Worktrees
+.worktrees/
+.claude/worktrees/
+
+# Local/private project assets
+local/
+private/
+assets/private/
