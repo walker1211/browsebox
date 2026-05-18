@@ -1,6 +1,7 @@
 # Binary
 /browsebox
 /browsebox-*
+/skill-sync
 *.exe
 *.dll
 *.so
