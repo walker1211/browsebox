@@ -16,6 +16,8 @@ type Options struct {
 	StateDir         string
 	MihomoBinaryPath string
 	ChromeBinaryPath string
+	ChromeProfileDir string
+	BrowserHeadless  bool
 	Keep             bool
 	Group            string
 	DefaultNode      string

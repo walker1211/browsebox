@@ -115,6 +115,8 @@ cp configs/config.example.yaml configs/config.yaml
 - `--state-dir <path>`：持久会话状态目录，默认位于 `~/.browsebox`。
 - `--mihomo <path>`：mihomo 可执行文件路径。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
+- `--chrome-profile-dir <path>`：Chrome profile 目录；留空时每次会话自动创建隔离临时 profile。
+- `--headless`：以无头模式启动 Chrome，适合 browser-mcp / CDP 自动化；默认可视化启动。
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
 - `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。
 - `--delay-timeout-ms <ms>`：mihomo 延迟检查超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。

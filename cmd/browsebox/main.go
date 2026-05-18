@@ -34,6 +34,8 @@ Flags:
   --state-dir path          Directory for persistent session state
   --mihomo path             Mihomo binary path
   --chrome path             Chrome binary path
+  --chrome-profile-dir path Chrome profile directory
+  --headless                Launch Chrome in headless mode
   --keep                    Keep runtime files after exit
   --group name              Proxy group name
   --node name               Default proxy node name
@@ -168,6 +170,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for persistent session state")
 	flags.StringVar(&opts.MihomoBinaryPath, "mihomo", opts.MihomoBinaryPath, "mihomo binary path")
 	flags.StringVar(&opts.ChromeBinaryPath, "chrome", opts.ChromeBinaryPath, "chrome binary path")
+	flags.StringVar(&opts.ChromeProfileDir, "chrome-profile-dir", opts.ChromeProfileDir, "chrome profile directory")
+	flags.BoolVar(&opts.BrowserHeadless, "headless", opts.BrowserHeadless, "launch Chrome in headless mode")
 	flags.BoolVar(&opts.Keep, "keep", opts.Keep, "keep runtime files after exit")
 	flags.StringVar(&opts.Group, "group", opts.Group, "proxy group name")
 	flags.StringVar(&opts.DefaultNode, "node", opts.DefaultNode, "default proxy node name")

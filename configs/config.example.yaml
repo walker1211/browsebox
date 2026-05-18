@@ -1,3 +1,33 @@
+mihomo:
+  controller_socket: /tmp/verge/verge-mihomo.sock
+  # config_path: ~/.config/mihomo/config.yaml
+  # binary_path: verge-mihomo
+
+browser:
+  # chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  # 留空时使用每次会话自动创建的隔离临时 profile；需要固定登录态时再设置。
+  profile_dir: ""
+  # browser-mcp / CDP 自动化可设为 true；手动登录和排查问题时建议保持 false。
+  headless: false
+
+runtime:
+  # dir: /tmp/browsebox
+  state_dir: ~/.browsebox
+  keep: false
+
+ports:
+  proxy: 17997
+  controller: 17998
+  devtools: 9223
+
+session:
+  group: All
+  node: ""
+  url: https://x.com/OpenAI
+  health_urls:
+    - https://x.com
+    - https://abs.twimg.com
+
 nodes:
   concurrency: 16
   delay_timeout_ms: 5000

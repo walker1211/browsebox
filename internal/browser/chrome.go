@@ -12,6 +12,7 @@ type Options struct {
 	UserDataDir  string
 	ProxyPort    int
 	DevToolsPort int
+	Headless     bool
 	URL          string
 }
 
@@ -22,14 +23,17 @@ func DefaultChromePath() string {
 
 // ChromeArgs builds Chrome arguments for an isolated localhost-proxied session.
 func ChromeArgs(opts Options) []string {
-	return []string{
+	args := []string{
 		"--user-data-dir=" + opts.UserDataDir,
 		fmt.Sprintf("--remote-debugging-port=%d", opts.DevToolsPort),
 		fmt.Sprintf("--proxy-server=http://127.0.0.1:%d", opts.ProxyPort),
 		"--no-first-run",
 		"--no-default-browser-check",
-		opts.URL,
 	}
+	if opts.Headless {
+		args = append(args, "--headless=new")
+	}
+	return append(args, opts.URL)
 }
 
 func ensureUserDataDir(path string) error {

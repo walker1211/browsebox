@@ -205,6 +205,77 @@ func disableLocalPortCheck(t *testing.T) {
 	t.Cleanup(func() { checkLocalPorts = oldCheckLocalPorts })
 }
 
+func TestRunUsesConfiguredChromeProfileDir(t *testing.T) {
+	disableLocalPortCheck(t)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["node-a"],"now":"node-a"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(controller.Close)
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(controller.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split controller URL: %v", err)
+	}
+	controllerPort, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse controller port: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.yaml")
+	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	configuredProfileDir := filepath.Join(tempDir, "chrome-profile")
+
+	oldStartProcess := startMihomoProcess
+	oldStartChrome := startChrome
+	t.Cleanup(func() {
+		startMihomoProcess = oldStartProcess
+		startChrome = oldStartChrome
+	})
+	startMihomoProcess = func(ctx context.Context, binaryPath, dir, configPath string) (process, error) {
+		return nopProcess{}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var chromeOpts browser.Options
+	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		chromeOpts = opts
+		cancel()
+		return nopProcess{}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.SourceConfigPath = sourcePath
+	opts.Group = "All"
+	opts.DefaultNode = "node-a"
+	opts.ControllerPort = controllerPort
+	opts.HealthURLs = nil
+	opts.ChromeProfileDir = configuredProfileDir
+	opts.BrowserHeadless = true
+
+	if err := application.Run(ctx, opts); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if chromeOpts.UserDataDir != configuredProfileDir {
+		t.Fatalf("Chrome profile dir = %q, want %q", chromeOpts.UserDataDir, configuredProfileDir)
+	}
+	if !chromeOpts.Headless {
+		t.Fatal("Chrome headless option was not passed to browser launch")
+	}
+}
+
 func TestStartSavesStateAndPrintsEndpointsWithoutStoppingProcesses(t *testing.T) {
 	disableLocalPortCheck(t)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

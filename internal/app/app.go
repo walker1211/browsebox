@@ -506,11 +506,12 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 		return startedSession{}, err
 	}
 
-	profileDir := filepath.Join(runtimeDir, "chrome-profile")
+	profileDir := chromeProfileDir(opts, runtimeDir)
 	chromeProcess, err := startChrome(processCtx, opts.ChromeBinaryPath, browser.Options{
 		UserDataDir:  profileDir,
 		ProxyPort:    opts.ProxyPort,
 		DevToolsPort: opts.DevToolsPort,
+		Headless:     opts.BrowserHeadless,
 		URL:          opts.TargetURL,
 	})
 	if err != nil {
@@ -578,6 +579,13 @@ func createRuntimeDir(baseDir string) (string, error) {
 		return "", err
 	}
 	return os.MkdirTemp(baseDir, "browsebox-*")
+}
+
+func chromeProfileDir(opts Options, runtimeDir string) string {
+	if strings.TrimSpace(opts.ChromeProfileDir) != "" {
+		return opts.ChromeProfileDir
+	}
+	return filepath.Join(runtimeDir, "chrome-profile")
 }
 
 func checkHealthURLs(ctx context.Context, client *mihomo.Client, node string, healthURLs []string, timeoutMS int) error {

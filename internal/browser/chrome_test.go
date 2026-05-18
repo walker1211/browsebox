@@ -40,6 +40,24 @@ func TestChromeArgsBuildsIsolatedProxySession(t *testing.T) {
 	}
 }
 
+func TestChromeArgsAddsHeadlessWhenConfigured(t *testing.T) {
+	opts := Options{
+		UserDataDir:  "/tmp/browsebox/profile",
+		ProxyPort:    17997,
+		DevToolsPort: 9223,
+		Headless:     true,
+		URL:          "https://example.com/start",
+	}
+
+	args := ChromeArgs(opts)
+	for _, arg := range args {
+		if arg == "--headless=new" {
+			return
+		}
+	}
+	t.Fatalf("ChromeArgs() = %#v, want --headless=new", args)
+}
+
 func TestEnsureUserDataDirCreatesPrivateDirectory(t *testing.T) {
 	profileDir := filepath.Join(t.TempDir(), "profile")
 	if err := ensureUserDataDir(profileDir); err != nil {

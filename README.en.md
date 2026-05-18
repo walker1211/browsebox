@@ -115,6 +115,8 @@ Common configuration options:
 - `--state-dir <path>`: persistent session state directory, defaulting to `~/.browsebox`.
 - `--mihomo <path>`: mihomo executable path.
 - `--chrome <path>`: Google Chrome executable path.
+- `--chrome-profile-dir <path>`: Chrome profile directory; if empty, each session gets an isolated temporary profile.
+- `--headless`: launch Chrome in headless mode for browser-mcp / CDP automation; visible Chrome remains the default.
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
