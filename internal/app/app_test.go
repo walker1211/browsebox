@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -102,6 +103,9 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\nallow-lan: true\ntun:\n  enable: true\n"), 0o600); err != nil {
 		t.Fatalf("write source config: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(tempDir, "geosite.dat"), []byte("geosite"), 0o600); err != nil {
+		t.Fatalf("write geosite data: %v", err)
+	}
 	runtimeBaseDir := filepath.Join(tempDir, "runtime")
 
 	var rewritten string
@@ -125,6 +129,13 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 		runtimeDir = dir
 		if !strings.HasPrefix(runtimeDir, runtimeBaseDir+string(os.PathSeparator)) {
 			t.Fatalf("runtime dir = %q, want child under %q", runtimeDir, runtimeBaseDir)
+		}
+		copiedData, err := os.ReadFile(filepath.Join(runtimeDir, "geosite.dat"))
+		if err != nil {
+			t.Fatalf("read copied geosite data: %v", err)
+		}
+		if string(copiedData) != "geosite" {
+			t.Fatalf("copied geosite data = %q, want geosite", string(copiedData))
 		}
 		return nopProcess{}, nil
 	}
@@ -188,6 +199,157 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPrepareMihomoDataFilesRefreshesCacheAndCopiesIntoRuntime(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sourceConfigPath := filepath.Join(sourceDir, "config.yaml")
+	if err := os.WriteFile(sourceConfigPath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "geosite.dat"), []byte("geosite-v1"), 0o600); err != nil {
+		t.Fatalf("write source data: %v", err)
+	}
+
+	cacheDir := filepath.Join(tempDir, "cache")
+	runtimeDir := filepath.Join(tempDir, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+	if err := prepareMihomoDataFiles(sourceConfigPath, cacheDir, runtimeDir); err != nil {
+		t.Fatalf("prepareMihomoDataFiles returned error: %v", err)
+	}
+	assertFileContent(t, filepath.Join(cacheDir, "geosite.dat"), "geosite-v1")
+	assertFileContent(t, filepath.Join(runtimeDir, "geosite.dat"), "geosite-v1")
+	info, err := os.Stat(cacheDir)
+	if err != nil {
+		t.Fatalf("stat cache dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("cache dir mode = %o, want 700", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "geosite.dat"), []byte("geosite-v2-new"), 0o600); err != nil {
+		t.Fatalf("update source data: %v", err)
+	}
+	runtimeDir = filepath.Join(tempDir, "runtime-second")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("create second runtime dir: %v", err)
+	}
+	if err := prepareMihomoDataFiles(sourceConfigPath, cacheDir, runtimeDir); err != nil {
+		t.Fatalf("prepareMihomoDataFiles after update returned error: %v", err)
+	}
+	assertFileContent(t, filepath.Join(cacheDir, "geosite.dat"), "geosite-v2-new")
+	assertFileContent(t, filepath.Join(runtimeDir, "geosite.dat"), "geosite-v2-new")
+}
+
+func TestPrepareMihomoDataFilesSkipsSymlinkSourceData(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sourceConfigPath := filepath.Join(sourceDir, "config.yaml")
+	if err := os.WriteFile(sourceConfigPath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	secretPath := filepath.Join(tempDir, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(sourceDir, "geosite.dat")); err != nil {
+		t.Fatalf("create source symlink: %v", err)
+	}
+	runtimeDir := filepath.Join(tempDir, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+
+	if err := prepareMihomoDataFiles(sourceConfigPath, "", runtimeDir); err != nil {
+		t.Fatalf("prepareMihomoDataFiles returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDir, "geosite.dat")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink source geosite.dat was copied or stat failed: %v", err)
+	}
+}
+
+func TestPrepareMihomoDataFilesRefusesSymlinkCacheEntry(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sourceConfigPath := filepath.Join(sourceDir, "config.yaml")
+	if err := os.WriteFile(sourceConfigPath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "geosite.dat"), []byte("geosite"), 0o600); err != nil {
+		t.Fatalf("write source data: %v", err)
+	}
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	secretPath := filepath.Join(tempDir, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(cacheDir, "geosite.dat")); err != nil {
+		t.Fatalf("create cache symlink: %v", err)
+	}
+	runtimeDir := filepath.Join(tempDir, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+
+	err := prepareMihomoDataFiles(sourceConfigPath, cacheDir, runtimeDir)
+	if err == nil || !strings.Contains(err.Error(), "cache geosite.dat") {
+		t.Fatalf("prepareMihomoDataFiles error = %v, want cache geosite.dat error", err)
+	}
+	assertFileContent(t, secretPath, "secret")
+}
+
+func TestPrepareMihomoDataFilesUsesExistingCacheWhenSourceDataMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	sourceConfigPath := filepath.Join(sourceDir, "config.yaml")
+	if err := os.WriteFile(sourceConfigPath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	cacheDir := filepath.Join(tempDir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "geosite.dat"), []byte("cached-geosite"), 0o600); err != nil {
+		t.Fatalf("write cached data: %v", err)
+	}
+	runtimeDir := filepath.Join(tempDir, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+
+	if err := prepareMihomoDataFiles(sourceConfigPath, cacheDir, runtimeDir); err != nil {
+		t.Fatalf("prepareMihomoDataFiles returned error: %v", err)
+	}
+	assertFileContent(t, filepath.Join(runtimeDir, "geosite.dat"), "cached-geosite")
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(content) != want {
+		t.Fatalf("%s = %q, want %q", path, string(content), want)
 	}
 }
 
@@ -264,6 +426,7 @@ func TestRunUsesConfiguredChromeProfileDir(t *testing.T) {
 	opts.HealthURLs = nil
 	opts.ChromeProfileDir = configuredProfileDir
 	opts.BrowserHeadless = true
+	opts.ChromeArgs = []string{"disable-background-networking"}
 
 	if err := application.Run(ctx, opts); err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -273,6 +436,9 @@ func TestRunUsesConfiguredChromeProfileDir(t *testing.T) {
 	}
 	if !chromeOpts.Headless {
 		t.Fatal("Chrome headless option was not passed to browser launch")
+	}
+	if len(chromeOpts.ChromeArgs) != 1 || chromeOpts.ChromeArgs[0] != "disable-background-networking" {
+		t.Fatalf("ChromeArgs = %#v, want configured arg", chromeOpts.ChromeArgs)
 	}
 }
 
@@ -947,6 +1113,71 @@ func TestStopRefusesUnsafeRuntimeDirAndPreservesState(t *testing.T) {
 	}
 }
 
+func TestStopAllowsChromeProfileOutsideRuntimeDir(t *testing.T) {
+	tempDir := t.TempDir()
+	stateDir := filepath.Join(tempDir, "state")
+	runtimeChild := filepath.Join(tempDir, "runtime-base", "browsebox-child")
+	chromeDir := filepath.Join(tempDir, "profiles", "walker")
+	if err := os.MkdirAll(runtimeChild, 0o700); err != nil {
+		t.Fatalf("create runtime child: %v", err)
+	}
+	if err := os.MkdirAll(chromeDir, 0o700); err != nil {
+		t.Fatalf("create chrome dir: %v", err)
+	}
+	profileSentinel := filepath.Join(chromeDir, "sentinel.txt")
+	if err := os.WriteFile(profileSentinel, []byte("keep profile"), 0o600); err != nil {
+		t.Fatalf("write profile sentinel: %v", err)
+	}
+	if err := state.Save(stateDir, state.Session{
+		ManagedBy:        "browsebox",
+		MihomoPID:        1111,
+		ChromePID:        2222,
+		RuntimeDir:       runtimeChild,
+		ChromeDir:        chromeDir,
+		MihomoBinaryPath: "/bin/mihomo",
+		ChromeBinaryPath: "/bin/chrome",
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	oldInspectProcess := inspectProcess
+	oldSignalProcess := signalProcess
+	oldProcessAlive := processAlive
+	t.Cleanup(func() {
+		inspectProcess = oldInspectProcess
+		signalProcess = oldSignalProcess
+		processAlive = oldProcessAlive
+	})
+	inspectProcess = func(pid int) (processInfo, error) {
+		switch pid {
+		case 1111:
+			return processInfo{PID: pid, Owner: strconv.Itoa(os.Geteuid()), Command: "/bin/mihomo -d " + runtimeChild}, nil
+		case 2222:
+			return processInfo{PID: pid, Owner: strconv.Itoa(os.Geteuid()), Command: "/bin/chrome --user-data-dir=" + chromeDir}, nil
+		default:
+			t.Fatalf("unexpected PID inspection: %d", pid)
+			return processInfo{}, os.ErrNotExist
+		}
+	}
+	signalProcess = func(pid int, sig os.Signal) error { return nil }
+	processAlive = func(pid int) (bool, error) { return false, nil }
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.StateDir = stateDir
+
+	if err := application.Stop(context.Background(), opts); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+	if _, err := os.Stat(runtimeChild); !os.IsNotExist(err) {
+		t.Fatalf("runtime dir still exists or stat failed: %v", err)
+	}
+	if _, err := os.Stat(profileSentinel); err != nil {
+		t.Fatalf("external chrome profile should survive stop: %v", err)
+	}
+}
+
 func TestStopSignalsRecordedPIDsRemovesStateAndRuntimeChild(t *testing.T) {
 	tempDir := t.TempDir()
 	stateDir := filepath.Join(tempDir, "state")
@@ -1472,9 +1703,11 @@ func TestNodesReturnsWhenControllerStalls(t *testing.T) {
 	opts.ControllerSocket = socketPath
 	opts.Group = "All"
 
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- application.Nodes(context.Background(), opts)
+		done <- application.Nodes(ctx, opts)
 	}()
 
 	select {

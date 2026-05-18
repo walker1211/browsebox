@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Options controls an isolated Chrome launch.
@@ -13,6 +14,7 @@ type Options struct {
 	ProxyPort    int
 	DevToolsPort int
 	Headless     bool
+	ChromeArgs   []string
 	URL          string
 }
 
@@ -23,17 +25,45 @@ func DefaultChromePath() string {
 
 // ChromeArgs builds Chrome arguments for an isolated localhost-proxied session.
 func ChromeArgs(opts Options) []string {
-	args := []string{
-		"--user-data-dir=" + opts.UserDataDir,
+	args := normalizeChromeArgs(opts.ChromeArgs)
+	args = append(args,
+		"--user-data-dir="+opts.UserDataDir,
 		fmt.Sprintf("--remote-debugging-port=%d", opts.DevToolsPort),
 		fmt.Sprintf("--proxy-server=http://127.0.0.1:%d", opts.ProxyPort),
-		"--no-first-run",
-		"--no-default-browser-check",
-	}
+	)
 	if opts.Headless {
 		args = append(args, "--headless=new")
 	}
 	return append(args, opts.URL)
+}
+
+func normalizeChromeArgs(values []string) []string {
+	args := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		trimmed = strings.TrimLeft(trimmed, "-")
+		if trimmed == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(trimmed, "=")
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] || isManagedChromeArg(name) {
+			continue
+		}
+		seen[name] = true
+		args = append(args, "--"+trimmed)
+	}
+	return args
+}
+
+func isManagedChromeArg(name string) bool {
+	switch name {
+	case "user-data-dir", "remote-debugging-port", "proxy-server":
+		return true
+	default:
+		return false
+	}
 }
 
 func ensureUserDataDir(path string) error {

@@ -3,6 +3,7 @@ package browser
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -18,16 +19,17 @@ func TestChromeArgsBuildsIsolatedProxySession(t *testing.T) {
 		UserDataDir:  "/tmp/browsebox/profile",
 		ProxyPort:    17997,
 		DevToolsPort: 9223,
+		ChromeArgs:   []string{"no-first-run", "no-default-browser-check"},
 		URL:          "https://example.com/start",
 	}
 
 	args := ChromeArgs(opts)
 	want := []string{
+		"--no-first-run",
+		"--no-default-browser-check",
 		"--user-data-dir=/tmp/browsebox/profile",
 		"--remote-debugging-port=9223",
 		"--proxy-server=http://127.0.0.1:17997",
-		"--no-first-run",
-		"--no-default-browser-check",
 		"https://example.com/start",
 	}
 	if len(args) != len(want) {
@@ -36,6 +38,51 @@ func TestChromeArgsBuildsIsolatedProxySession(t *testing.T) {
 	for i := range want {
 		if args[i] != want[i] {
 			t.Fatalf("ChromeArgs() = %#v, want %#v", args, want)
+		}
+	}
+}
+
+func TestChromeArgsNormalizesConfiguredChromeArgs(t *testing.T) {
+	opts := Options{
+		UserDataDir:  "/tmp/browsebox/profile",
+		ProxyPort:    17997,
+		DevToolsPort: 9223,
+		ChromeArgs:   []string{" --no-first-run ", "disable-component-update=true", "no-first-run", "", "--disable-background-networking"},
+		URL:          "https://example.com/start",
+	}
+
+	args := ChromeArgs(opts)
+	wantPrefix := []string{"--no-first-run", "--disable-component-update=true", "--disable-background-networking"}
+	for i, want := range wantPrefix {
+		if args[i] != want {
+			t.Fatalf("ChromeArgs() = %#v, want prefix %#v", args, wantPrefix)
+		}
+	}
+}
+
+func TestChromeArgsIgnoresManagedChromeArgs(t *testing.T) {
+	opts := Options{
+		UserDataDir:  "/tmp/browsebox/profile",
+		ProxyPort:    17997,
+		DevToolsPort: 9223,
+		ChromeArgs: []string{
+			"user-data-dir=/tmp/unsafe-profile",
+			"remote-debugging-port=1",
+			"proxy-server=http://127.0.0.1:8080",
+			"no-first-run",
+		},
+		URL: "https://example.com/start",
+	}
+
+	args := ChromeArgs(opts)
+	for _, unwanted := range []string{"--user-data-dir=/tmp/unsafe-profile", "--remote-debugging-port=1", "--proxy-server=http://127.0.0.1:8080"} {
+		if slices.Contains(args, unwanted) {
+			t.Fatalf("ChromeArgs() = %#v, should ignore managed arg %q", args, unwanted)
+		}
+	}
+	for _, want := range []string{"--user-data-dir=/tmp/browsebox/profile", "--remote-debugging-port=9223", "--proxy-server=http://127.0.0.1:17997"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("ChromeArgs() = %#v, want managed arg %q", args, want)
 		}
 	}
 }
@@ -50,12 +97,9 @@ func TestChromeArgsAddsHeadlessWhenConfigured(t *testing.T) {
 	}
 
 	args := ChromeArgs(opts)
-	for _, arg := range args {
-		if arg == "--headless=new" {
-			return
-		}
+	if !slices.Contains(args, "--headless=new") {
+		t.Fatalf("ChromeArgs() = %#v, want --headless=new", args)
 	}
-	t.Fatalf("ChromeArgs() = %#v, want --headless=new", args)
 }
 
 func TestEnsureUserDataDirCreatesPrivateDirectory(t *testing.T) {

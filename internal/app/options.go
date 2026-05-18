@@ -13,10 +13,12 @@ type Options struct {
 	ControllerSocket string
 	SourceConfigPath string
 	RuntimeDir       string
+	RuntimeCacheDir  string
 	StateDir         string
 	MihomoBinaryPath string
 	ChromeBinaryPath string
 	ChromeProfileDir string
+	ChromeArgs       []string
 	BrowserHeadless  bool
 	Keep             bool
 	Group            string
@@ -38,6 +40,10 @@ func DefaultOptions() Options {
 		StateDir:         defaultStateDir(),
 		MihomoBinaryPath: mihomo.DefaultBinaryPath(),
 		ChromeBinaryPath: browser.DefaultChromePath(),
+		ChromeArgs: []string{
+			"no-first-run",
+			"no-default-browser-check",
+		},
 		Group:            "All",
 		DefaultNode:      "",
 		ProxyPort:        17997,

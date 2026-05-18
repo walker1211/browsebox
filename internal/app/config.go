@@ -94,6 +94,10 @@ func applyConfigValue(section, key, value string, opts *Options) error {
 
 func applyConfigListItem(section, key, value string, opts *Options) error {
 	switch section {
+	case "browser":
+		if key == "chrome_args" || key == "chrome-args" {
+			appendChromeArg(opts, cleanConfigString(value))
+		}
 	case "session":
 		if key == "health_urls" || key == "health-urls" {
 			opts.HealthURLs = append(opts.HealthURLs, cleanConfigString(value))
@@ -120,6 +124,12 @@ func applyBrowserConfig(key, value string, opts *Options) error {
 		opts.ChromeBinaryPath = expandConfigPath(value)
 	case "profile_dir", "profile-dir":
 		opts.ChromeProfileDir = expandConfigPath(value)
+	case "chrome_args", "chrome-args":
+		if cleanConfigString(value) == "[]" {
+			opts.ChromeArgs = []string{}
+		} else {
+			appendChromeArg(opts, cleanConfigString(value))
+		}
 	case "headless":
 		headless, err := strconv.ParseBool(cleanConfigString(value))
 		if err != nil {
@@ -130,10 +140,27 @@ func applyBrowserConfig(key, value string, opts *Options) error {
 	return nil
 }
 
+func appendChromeArg(opts *Options, value string) {
+	name, _, _ := strings.Cut(strings.TrimLeft(strings.TrimSpace(value), "-"), "=")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for _, existing := range opts.ChromeArgs {
+		existingName, _, _ := strings.Cut(strings.TrimLeft(strings.TrimSpace(existing), "-"), "=")
+		if strings.TrimSpace(existingName) == name {
+			return
+		}
+	}
+	opts.ChromeArgs = append(opts.ChromeArgs, value)
+}
+
 func applyRuntimeConfig(key, value string, opts *Options) error {
 	switch key {
 	case "dir":
 		opts.RuntimeDir = expandConfigPath(value)
+	case "cache_dir", "cache-dir":
+		opts.RuntimeCacheDir = expandConfigPath(value)
 	case "state_dir", "state-dir":
 		opts.StateDir = expandConfigPath(value)
 	case "keep":

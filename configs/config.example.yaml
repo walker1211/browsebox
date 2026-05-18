@@ -9,9 +9,16 @@ browser:
   profile_dir: ""
   # browser-mcp / CDP 自动化可设为 true；手动登录和排查问题时建议保持 false。
   headless: false
+  # 额外 Chrome 启动参数；使用 block list 或 []，每项可以带或不带开头的 --。
+  chrome_args:
+    - no-first-run
+    - no-default-browser-check
+    - disable-background-networking
+    - disable-component-update
 
 runtime:
   # dir: /tmp/browsebox
+  # cache_dir: ~/.cache/browsebox/mihomo
   state_dir: ~/.browsebox
   keep: false
 

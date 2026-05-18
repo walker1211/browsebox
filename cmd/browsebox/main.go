@@ -31,6 +31,7 @@ Flags:
   --controller-socket path  Controller Unix socket path
   --config path             Source mihomo config path
   --runtime-dir path        Runtime directory for temporary files
+  --runtime-cache-dir path  Cache directory for mihomo geodata files
   --state-dir path          Directory for persistent session state
   --mihomo path             Mihomo binary path
   --chrome path             Chrome binary path
@@ -167,6 +168,7 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.ControllerSocket, "controller-socket", opts.ControllerSocket, "controller Unix socket path")
 	flags.StringVar(&opts.SourceConfigPath, "config", opts.SourceConfigPath, "source mihomo config path")
 	flags.StringVar(&opts.RuntimeDir, "runtime-dir", opts.RuntimeDir, "runtime directory for temporary files")
+	flags.StringVar(&opts.RuntimeCacheDir, "runtime-cache-dir", opts.RuntimeCacheDir, "cache directory for mihomo geodata files")
 	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for persistent session state")
 	flags.StringVar(&opts.MihomoBinaryPath, "mihomo", opts.MihomoBinaryPath, "mihomo binary path")
 	flags.StringVar(&opts.ChromeBinaryPath, "chrome", opts.ChromeBinaryPath, "chrome binary path")

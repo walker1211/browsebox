@@ -112,10 +112,12 @@ cp configs/config.example.yaml configs/config.yaml
 - `--controller-socket <path>`：主 Clash Verge Rev/mihomo 控制器 Unix socket。
 - `--config <path>`：源 mihomo 配置。默认优先使用 `~/.config/mihomo/config.yaml`；不存在时会探测 Clash Verge Rev 的常见 macOS 配置位置。
 - `--runtime-dir <path>`：临时运行目录的父目录；未设置时使用系统临时目录。
+- `--runtime-cache-dir <path>`：mihomo geodata 缓存目录，用于复用 `geosite` / `geoip` 等数据文件。
 - `--state-dir <path>`：持久会话状态目录，默认位于 `~/.browsebox`。
 - `--mihomo <path>`：mihomo 可执行文件路径。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
 - `--chrome-profile-dir <path>`：Chrome profile 目录；留空时每次会话自动创建隔离临时 profile。
+- `browser.chrome_args`：额外 Chrome 启动参数配置；使用 block list 或 `[]`，每项可以带或不带开头的 `--`，会保留顺序并按参数名去重。`user-data-dir`、`proxy-server`、`remote-debugging-port` 由 browsebox 管理，配置中同名参数会被忽略。
 - `--headless`：以无头模式启动 Chrome，适合 browser-mcp / CDP 自动化；默认可视化启动。
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
 - `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。

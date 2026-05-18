@@ -25,8 +25,8 @@ import (
 
 const (
 	managedByBrowsebox      = "browsebox"
-	controllerLookupTimeout = 200 * time.Millisecond
-	controllerReadyTimeout  = 5 * time.Second
+	controllerLookupTimeout = 3 * time.Second
+	controllerReadyTimeout  = 10 * time.Second
 	controllerReadyInterval = 25 * time.Millisecond
 	selectNodeTimeout       = 2 * time.Second
 	processStopTimeout      = 2 * time.Second
@@ -468,6 +468,9 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 			_ = os.RemoveAll(runtimeDir)
 		}
 	}()
+	if err := prepareMihomoDataFiles(opts.SourceConfigPath, opts.RuntimeCacheDir, runtimeDir); err != nil {
+		return startedSession{}, fmt.Errorf("prepare mihomo data files: %w", err)
+	}
 
 	rewritten := mihomo.RewriteConfig(string(sourceConfig), mihomo.RuntimeConfigOptions{
 		ProxyPort:      opts.ProxyPort,
@@ -512,6 +515,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 		ProxyPort:    opts.ProxyPort,
 		DevToolsPort: opts.DevToolsPort,
 		Headless:     opts.BrowserHeadless,
+		ChromeArgs:   opts.ChromeArgs,
 		URL:          opts.TargetURL,
 	})
 	if err != nil {
@@ -579,6 +583,117 @@ func createRuntimeDir(baseDir string) (string, error) {
 		return "", err
 	}
 	return os.MkdirTemp(baseDir, "browsebox-*")
+}
+
+var mihomoDataFileNames = []string{
+	"Country.mmdb",
+	"geoip.dat",
+	"GeoIP.dat",
+	"geosite.dat",
+	"GeoSite.dat",
+	"geoip.metadb",
+}
+
+func prepareMihomoDataFiles(sourceConfigPath, cacheDir, runtimeDir string) error {
+	if strings.TrimSpace(cacheDir) == "" {
+		return copyMihomoDataFiles(filepath.Dir(sourceConfigPath), runtimeDir)
+	}
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
+	if err := os.Chmod(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("chmod cache dir: %w", err)
+	}
+	if err := refreshMihomoDataCache(filepath.Dir(sourceConfigPath), cacheDir); err != nil {
+		return err
+	}
+	return copyMihomoDataFiles(cacheDir, runtimeDir)
+}
+
+func refreshMihomoDataCache(sourceDir, cacheDir string) error {
+	for _, name := range mihomoDataFileNames {
+		sourcePath := filepath.Join(sourceDir, name)
+		sourceInfo, err := os.Lstat(sourcePath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("stat source %s: %w", name, err)
+		}
+		if !sourceInfo.Mode().IsRegular() {
+			continue
+		}
+		cachePath := filepath.Join(cacheDir, name)
+		cacheInfo, err := os.Lstat(cachePath)
+		if err == nil && !cacheInfo.Mode().IsRegular() {
+			return fmt.Errorf("cache %s is not a regular file", name)
+		}
+		if err == nil && cacheInfo.Size() == sourceInfo.Size() && !sourceInfo.ModTime().After(cacheInfo.ModTime()) {
+			continue
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat cache %s: %w", name, err)
+		}
+		if err := copyFile(sourcePath, cachePath); err != nil {
+			return fmt.Errorf("cache %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func copyMihomoDataFiles(sourceDir, runtimeDir string) error {
+	for _, name := range mihomoDataFileNames {
+		if err := copyOptionalDataFile(filepath.Join(sourceDir, name), filepath.Join(runtimeDir, name)); err != nil {
+			return fmt.Errorf("copy %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func copyOptionalDataFile(sourcePath, targetPath string) error {
+	info, err := os.Lstat(sourcePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	return copyFile(sourcePath, targetPath)
+}
+
+func copyFile(sourcePath, targetPath string) error {
+	if info, err := os.Lstat(sourcePath); err != nil {
+		return fmt.Errorf("stat source: %w", err)
+	} else if !info.Mode().IsRegular() {
+		return fmt.Errorf("source is not a regular file")
+	}
+	if info, err := os.Lstat(targetPath); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("target is not a regular file")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat target: %w", err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	defer source.Close()
+
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	_, copyErr := io.Copy(target, source)
+	closeErr := target.Close()
+	if copyErr != nil {
+		return fmt.Errorf("write: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("write: %w", closeErr)
+	}
+	return nil
 }
 
 func chromeProfileDir(opts Options, runtimeDir string) string {
@@ -799,16 +914,6 @@ func validateRuntimeDirForRemoval(session state.Session, stateDir string) error 
 	}
 	if stateDir != "" && runtimeDir == filepath.Clean(stateDir) {
 		return fmt.Errorf("unsafe runtime dir %q: refusing to remove state dir", session.RuntimeDir)
-	}
-	if session.ChromeDir != "" {
-		chromeDir := filepath.Clean(session.ChromeDir)
-		if session.ChromeDir != chromeDir || !filepath.IsAbs(chromeDir) {
-			return fmt.Errorf("unsafe runtime dir %q: chrome dir must be a clean absolute path", session.RuntimeDir)
-		}
-		rel, err := filepath.Rel(runtimeDir, chromeDir)
-		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-			return fmt.Errorf("unsafe runtime dir %q: chrome dir is outside runtime dir", session.RuntimeDir)
-		}
 	}
 	return nil
 }

@@ -112,10 +112,12 @@ Common configuration options:
 - `--controller-socket <path>`: Unix socket for the main Clash Verge Rev/mihomo controller.
 - `--config <path>`: source mihomo config. The default prefers `~/.config/mihomo/config.yaml`; if missing, browsebox probes the common macOS Clash Verge Rev config location.
 - `--runtime-dir <path>`: parent directory for temporary runtime directories; if omitted, the system temp directory is used.
+- `--runtime-cache-dir <path>`: mihomo geodata cache directory for reusing files such as `geosite` and `geoip`.
 - `--state-dir <path>`: persistent session state directory, defaulting to `~/.browsebox`.
 - `--mihomo <path>`: mihomo executable path.
 - `--chrome <path>`: Google Chrome executable path.
 - `--chrome-profile-dir <path>`: Chrome profile directory; if empty, each session gets an isolated temporary profile.
+- `browser.chrome_args`: extra Chrome launch arguments in config; use block-list syntax or `[]`. Entries may include or omit the leading `--`, and duplicate names are ignored after the first occurrence. `user-data-dir`, `proxy-server`, and `remote-debugging-port` are managed by browsebox and ignored if configured.
 - `--headless`: launch Chrome in headless mode for browser-mcp / CDP automation; visible Chrome remains the default.
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
