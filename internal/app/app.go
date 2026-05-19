@@ -144,23 +144,8 @@ var (
 		}
 		return processInfo{PID: pid, Owner: fields[0], Command: strings.TrimSpace(strings.TrimPrefix(line, fields[0]))}, nil
 	}
-	signalProcess = func(pid int, sig os.Signal) error {
-		sysSig, ok := sig.(syscall.Signal)
-		if !ok {
-			return fmt.Errorf("unsupported signal %v", sig)
-		}
-		return syscall.Kill(pid, sysSig)
-	}
-	processAlive = func(pid int) (bool, error) {
-		err := syscall.Kill(pid, 0)
-		if err == nil {
-			return true, nil
-		}
-		if errors.Is(err, syscall.ESRCH) {
-			return false, nil
-		}
-		return false, err
-	}
+	signalProcess       = defaultSignalProcess
+	processAlive        = defaultProcessAlive
 	checkLocalPorts     = ensureLocalPortsAvailable
 	currentProcessOwner = func() (string, error) {
 		return strconv.Itoa(os.Geteuid()), nil
