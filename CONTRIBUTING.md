@@ -37,6 +37,19 @@ Run these before opening a pull request:
 gofmt -w cmd internal
 go test ./...
 ./build.sh
+scripts/ci-local.sh clean
+```
+
+Run the secret scanner directly when changing docs, config templates, scripts, or release automation:
+
+```bash
+scripts/secret-scan.sh
+```
+
+Install the optional pre-push hook if you want clean CI to run before each push:
+
+```bash
+scripts/install-hooks.sh
 ```
 
 For behavior that touches live proxy or browser sessions, also smoke test the affected command with a non-sensitive node and URL.
@@ -59,3 +72,14 @@ Keep pull requests focused and describe:
 - Any live smoke testing performed or intentionally skipped
 
 Use Conventional Commits for commit messages when practical.
+
+## Releases
+
+Release tags are owned by maintainers. To prepare a release locally:
+
+```bash
+scripts/tag-release.sh v0.1.0
+git push origin v0.1.0
+```
+
+The tag script requires a clean worktree and runs `scripts/ci-local.sh clean` before creating the annotated tag. Pushing a `v*` tag triggers the GitHub Release workflow.

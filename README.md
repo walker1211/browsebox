@@ -4,4 +4,4 @@
 
 browsebox is a Go CLI for launching isolated, proxy-routed Google Chrome sessions through a temporary mihomo controller. It can list available proxy groups and nodes from your existing Clash Verge Rev/mihomo controller and run either temporary or persistent isolated browser sessions without mutating your main selector from read-only commands.
 
-For setup, usage examples, safety notes, and configuration details, use the language links above.
+For setup, usage examples, local validation, release notes, safety notes, and configuration details, use the language links above.

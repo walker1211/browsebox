@@ -6,6 +6,7 @@
 
 - [ ] `go test ./...`
 - [ ] `./build.sh`
+- [ ] `scripts/ci-local.sh clean`
 - [ ] Live smoke test if this changes controller, proxy, browser, process, or state behavior
 
 ## Safety checklist

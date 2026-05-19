@@ -45,7 +45,7 @@ func TestRewriteConfigRemovesUnsafeTopLevelListenerControllerAndSecretKeys(t *te
 		"tproxy-port: 7893",
 		"external-controller-tls: 0.0.0.0:9443",
 		"external-controller-unix: /tmp/verge/verge-mihomo.sock",
-		"secret: super-secret-token",
+		"secret: test-secret",
 		"proxies:",
 		"  - name: credentialed-node",
 		"    type: ss",

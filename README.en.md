@@ -17,16 +17,31 @@ From the repository root:
 ./build.sh
 ```
 
+The script runs tests and creates two local binaries: `./browsebox` and `./skill-sync`. On success it prints output like:
+
+```text
+Building...
+Done. Binaries: ./browsebox ./skill-sync
+```
+
 Install to `PREFIX/bin` (`/usr/local/bin` by default):
 
 ```bash
 ./build.sh install
 ```
 
+The installed command names are `browsebox` and `browsebox-skill-sync`. Verify them with:
+
+```bash
+browsebox --help
+browsebox-skill-sync --help
+```
+
 You can also build manually:
 
 ```bash
 go build -o browsebox ./cmd/browsebox
+go build -o skill-sync ./cmd/skill-sync
 ```
 
 You can also run it without creating a binary:
@@ -89,6 +104,20 @@ Stop the persistent session and clean state:
 ./browsebox stop
 ```
 
+Sync the repository-provided browsebox Claude skill into the user-level skill install:
+
+```bash
+./skill-sync --check
+./skill-sync --apply
+```
+
+If installed through `./build.sh install`, use:
+
+```bash
+browsebox-skill-sync --check
+browsebox-skill-sync --apply
+```
+
 ## Configuration and default locations
 
 Local structured configuration is loaded automatically from `configs/config.yaml`. Copy the non-sensitive template and adjust it as needed; command-line flags override local configuration:
@@ -123,6 +152,29 @@ Common configuration options:
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
+
+## Local verification and release
+
+Run the full local verification flow:
+
+```bash
+scripts/ci-local.sh clean
+```
+
+Install the pre-push hook to run clean CI before each push:
+
+```bash
+scripts/install-hooks.sh
+```
+
+Releases are created from `v*` tags by the GitHub Release workflow:
+
+```bash
+scripts/tag-release.sh v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow runs history secret scanning, multi-platform builds, checksum generation, and GitHub Release creation or update. Release archives should contain only binaries, READMEs, LICENSE, and non-sensitive configuration templates.
 
 ## Safety notes
 

@@ -17,16 +17,31 @@ browsebox 是一个 Go 标准库 CLI，用于通过隔离的临时 mihomo 控制
 ./build.sh
 ```
 
+脚本会运行测试并生成两个本地二进制：`./browsebox` 和 `./skill-sync`。成功时会输出类似：
+
+```text
+Building...
+Done. Binaries: ./browsebox ./skill-sync
+```
+
 安装到 `PREFIX/bin`（默认 `/usr/local/bin`）：
 
 ```bash
 ./build.sh install
 ```
 
+安装后的命令名是 `browsebox` 和 `browsebox-skill-sync`。可以这样验证：
+
+```bash
+browsebox --help
+browsebox-skill-sync --help
+```
+
 也可以手动构建：
 
 ```bash
 go build -o browsebox ./cmd/browsebox
+go build -o skill-sync ./cmd/skill-sync
 ```
 
 也可以不生成二进制，直接使用：
@@ -89,6 +104,20 @@ go run ./cmd/browsebox --help
 ./browsebox stop
 ```
 
+同步仓库内置的 browsebox Claude skill 到用户级 skill 安装目录：
+
+```bash
+./skill-sync --check
+./skill-sync --apply
+```
+
+如果已经通过 `./build.sh install` 安装，则使用：
+
+```bash
+browsebox-skill-sync --check
+browsebox-skill-sync --apply
+```
+
 ## 配置与默认位置
 
 本地结构化配置会从 `configs/config.yaml` 自动读取；可从非敏感模板复制后按需调整，命令行 flag 会覆盖本地配置：
@@ -123,6 +152,29 @@ cp configs/config.example.yaml configs/config.yaml
 - `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。
 - `--delay-timeout-ms <ms>`：mihomo 延迟检查超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。
 - `--health-url <url>`：启动 `run` / `start` 前通过临时 mihomo 检查所选节点的 URL，可重复传入；任一检查失败会停止启动并清理临时资源。
+
+## 本地验证与发布
+
+本地完整验证：
+
+```bash
+scripts/ci-local.sh clean
+```
+
+安装 pre-push hook 后，每次 push 前会运行 clean CI：
+
+```bash
+scripts/install-hooks.sh
+```
+
+发布使用 `v*` tag 触发 GitHub Release workflow：
+
+```bash
+scripts/tag-release.sh v0.1.0
+git push origin v0.1.0
+```
+
+Release workflow 会做 history secret scan、多平台构建、生成校验和，并创建或更新 GitHub Release。发布归档只应包含可执行文件、README、LICENSE 和非敏感配置模板。
 
 ## 安全说明
 

@@ -9,29 +9,33 @@ import (
 )
 
 func TestHelpPrintsUsageAndCommands(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"run", "--help"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
 
-	code := run([]string{"--help"}, &stdout, &stderr)
+			code := run(args, &stdout, &stderr)
 
-	if code != 0 {
-		t.Fatalf("run returned %d, want 0", code)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	out := stdout.String()
-	for _, want := range []string{
-		"browsebox launches isolated proxy-routed browser sessions.",
-		"groups",
-		"nodes",
-		"run",
-		"start",
-		"status",
-		"stop",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("help output missing %q:\n%s", want, out)
-		}
+			if code != 0 {
+				t.Fatalf("run returned %d, want 0", code)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			out := stdout.String()
+			for _, want := range []string{
+				"browsebox launches isolated proxy-routed browser sessions.",
+				"groups",
+				"nodes",
+				"run",
+				"start",
+				"status",
+				"stop",
+			} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("help output missing %q:\n%s", want, out)
+				}
+			}
+		})
 	}
 }
 
