@@ -1270,13 +1270,9 @@ func TestStopKeepPreservesRuntimeDir(t *testing.T) {
 	if err := os.MkdirAll(runtimeChild, 0o700); err != nil {
 		t.Fatalf("create runtime child: %v", err)
 	}
-	if err := state.Save(stateDir, state.Session{ManagedBy: "browsebox", MihomoPID: 1111, ChromePID: 2222, RuntimeDir: runtimeChild}); err != nil {
+	if err := state.Save(stateDir, state.Session{ManagedBy: "browsebox", RuntimeDir: runtimeChild}); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-
-	oldFindProcess := findProcess
-	t.Cleanup(func() { findProcess = oldFindProcess })
-	findProcess = func(pid int) (process, error) { return &recordingProcess{pid: pid}, nil }
 
 	var stdout, stderr bytes.Buffer
 	application := New(&stdout, &stderr)
