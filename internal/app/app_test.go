@@ -1569,6 +1569,215 @@ func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	}
 }
 
+func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
+	requests := make(chan struct {
+		path string
+		body string
+	}, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["slow-node","fast-node","dead-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/slow-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":80}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read PUT body: %v", err)
+			}
+			requests <- struct {
+				path string
+				body string
+			}{r.URL.Path, string(body)}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 3
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var got struct {
+		path string
+		body string
+	}
+	select {
+	case got = <-requests:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select the fastest node")
+	}
+	if got.path != "/proxies/All" {
+		t.Fatalf("PUT path = %q, want /proxies/All", got.path)
+	}
+	if got.body != `{"name":"fast-node"}`+"\n" {
+		t.Fatalf("PUT body = %q, want fast-node JSON payload", got.body)
+	}
+
+	out := stdout.String()
+	fastIndex := strings.Index(out, "fast-node")
+	slowIndex := strings.Index(out, "slow-node")
+	deadIndex := strings.Index(out, "dead-node")
+	if fastIndex == -1 || slowIndex == -1 || deadIndex == -1 {
+		t.Fatalf("nodes output missing expected rows:\n%s", out)
+	}
+	if !(fastIndex < slowIndex && slowIndex < deadIndex) {
+		t.Fatalf("nodes output not sorted by healthy delay with unhealthy last:\n%s", out)
+	}
+	if !strings.Contains(out, "selected fast-node (10ms) for group All") {
+		t.Fatalf("nodes output missing selection success line:\n%s", out)
+	}
+}
+
+func TestNodesSelectFastestUsesLookupGroupWhenResponseOmitsName(t *testing.T) {
+	requests := make(chan string, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type":"Selector","all":["fast-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodPut:
+			requests <- r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got != "/proxies/All" {
+			t.Fatalf("PUT path = %q, want /proxies/All", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select the fastest node")
+	}
+}
+
+func TestNodesSelectFastestReturnsErrorWhenNoHealthyNodes(t *testing.T) {
+	var putCount int32
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["dead-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		case r.Method == http.MethodPut:
+			atomic.AddInt32(&putCount, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.SelectFastest = true
+
+	err := application.Nodes(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Nodes returned nil error, want no healthy nodes error")
+	}
+	if !strings.Contains(err.Error(), `select fastest node in group "All": no healthy nodes`) {
+		t.Fatalf("error = %v, want no healthy nodes context", err)
+	}
+	if got := atomic.LoadInt32(&putCount); got != 0 {
+		t.Fatalf("PUT count = %d, want 0", got)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "dead-node") || !strings.Contains(out, "unhealthy") {
+		t.Fatalf("unhealthy table was not printed before error:\n%s", out)
+	}
+}
+
+func TestNodesSelectFastestReturnsErrorWhenControllerRejectsSelection(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["fast-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			http.Error(w, `{"message":"selection rejected"}`, http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.SelectFastest = true
+
+	err := application.Nodes(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Nodes returned nil error, want selection rejection error")
+	}
+	if !strings.Contains(err.Error(), `select fastest node "fast-node" in group "All"`) {
+		t.Fatalf("error = %v, want selection context", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "fast-node") || !strings.Contains(out, "ok") || !strings.Contains(out, "10ms") {
+		t.Fatalf("delay table was not printed before error:\n%s", out)
+	}
+	if strings.Contains(out, "selected fast-node") {
+		t.Fatalf("nodes output contains unexpected success line:\n%s", out)
+	}
+}
+
 func TestNodesRespectsConcurrencyLimitAndDelayTimeout(t *testing.T) {
 	nodes := []string{"node-1", "node-2", "node-3", "node-4"}
 	delayRequests := make(chan struct{}, len(nodes))

@@ -219,7 +219,30 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
-	return writer.Flush()
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if !opts.SelectFastest {
+		return nil
+	}
+	return a.selectFastestNode(ctx, client, opts.Group, results)
+}
+
+func (a *App) selectFastestNode(ctx context.Context, client *mihomo.Client, group string, results []nodeDelayResult) error {
+	for _, result := range results {
+		if !result.healthy {
+			continue
+		}
+		selectCtx, cancelSelect := context.WithTimeout(ctx, selectNodeTimeout)
+		err := client.SelectNode(selectCtx, group, result.name)
+		cancelSelect()
+		if err != nil {
+			return fmt.Errorf("select fastest node %q in group %q: %w", result.name, group, err)
+		}
+		_, err = fmt.Fprintf(a.stdout, "selected %s (%dms) for group %s\n", sanitizeDisplayName(result.name), result.delay, sanitizeDisplayName(group))
+		return err
+	}
+	return fmt.Errorf("select fastest node in group %q: no healthy nodes", group)
 }
 
 type nodeDelayResult struct {

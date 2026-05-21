@@ -90,7 +90,7 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	opts := app.DefaultOptions()
 	flags := newFlagSet("browsebox nodes", &opts)
 
-	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--headless"}); err != nil {
+	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500", "--select-fastest", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--headless"}); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if opts.NodesConcurrency != 32 {
@@ -98,6 +98,9 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	}
 	if opts.DelayTimeoutMS != 2500 {
 		t.Fatalf("DelayTimeoutMS = %d, want 2500", opts.DelayTimeoutMS)
+	}
+	if !opts.SelectFastest {
+		t.Fatal("SelectFastest = false, want true")
 	}
 	if opts.RuntimeCacheDir != "/tmp/cache" {
 		t.Fatalf("RuntimeCacheDir = %q, want /tmp/cache", opts.RuntimeCacheDir)

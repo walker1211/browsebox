@@ -80,6 +80,12 @@ Check node delays concurrently; healthy nodes are sorted by ascending delay and 
 ./browsebox nodes --group "<group>"
 ```
 
+Explicitly switch the main Clash/mihomo selector to the lowest-delay healthy node from the current check:
+
+```bash
+./browsebox nodes --group "<group>" --url "https://chatgpt.com" --select-fastest
+```
+
 Launch a one-shot isolated session in the foreground. It exits on interrupt and cleans runtime files by default:
 
 ```bash
@@ -151,6 +157,7 @@ Common configuration options:
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
+- `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch `<group>` in the main controller to the lowest-delay healthy node.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 
 ## Local verification and release
@@ -178,7 +185,7 @@ The release workflow runs history secret scanning, multi-platform builds, checks
 
 ## Safety notes
 
-- `nodes` only reads proxy groups and node delay from the main controller; it does not switch the main controller selector.
+- By default, `nodes` only reads proxy groups and node delay from the main controller; it switches the main controller selector only when `--select-fastest` is passed.
 - `run` / `start` copy and rewrite the source config, then select `<node>` only inside the temporary mihomo controller.
 - Proxy, temporary controller, and DevTools endpoints are bound to `127.0.0.1` only.
 - Do not commit runtime configs, state, logs, local config, or files containing credentials.

@@ -30,6 +30,7 @@ type Options struct {
 	HealthURLs       []string
 	NodesConcurrency int
 	DelayTimeoutMS   int
+	SelectFastest    bool
 }
 
 // DefaultOptions returns safe macOS-oriented defaults for browsebox.
