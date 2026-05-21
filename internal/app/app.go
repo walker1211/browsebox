@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/walker1211/browsebox/internal/browser"
 	"github.com/walker1211/browsebox/internal/mihomo"
@@ -210,16 +211,7 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
 	sortNodeDelayResults(results)
 
-	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "NODE\tSTATUS\tDELAY"); err != nil {
-		return err
-	}
-	for _, result := range results {
-		if err := writeNodeDelayResult(writer, result); err != nil {
-			return err
-		}
-	}
-	if err := writer.Flush(); err != nil {
+	if err := writeNodeDelayResults(a.stdout, results); err != nil {
 		return err
 	}
 	if !opts.SelectFastest {
@@ -324,14 +316,208 @@ func sortNodeDelayResults(results []nodeDelayResult) {
 	})
 }
 
-func writeNodeDelayResult(w io.Writer, result nodeDelayResult) error {
-	displayName := sanitizeDisplayName(result.name)
-	if !result.healthy {
-		_, err := fmt.Fprintf(w, "%s\tunhealthy\t-\n", displayName)
-		return err
+type nodeDelayRow struct {
+	node   string
+	status string
+	delay  string
+}
+
+func writeNodeDelayResults(w io.Writer, results []nodeDelayResult) error {
+	rows := make([]nodeDelayRow, 0, len(results)+1)
+	rows = append(rows, nodeDelayRow{node: "NODE", status: "STATUS", delay: "DELAY"})
+	for _, result := range results {
+		rows = append(rows, nodeDelayResultRow(result))
 	}
-	_, err := fmt.Fprintf(w, "%s\tok\t%dms\n", displayName, result.delay)
-	return err
+	return writeFixedWidthRows(w, rows)
+}
+
+func nodeDelayResultRow(result nodeDelayResult) nodeDelayRow {
+	if !result.healthy {
+		return nodeDelayRow{
+			node:   sanitizeDisplayName(result.name),
+			status: "unhealthy",
+			delay:  "-",
+		}
+	}
+	return nodeDelayRow{
+		node:   sanitizeDisplayName(result.name),
+		status: "ok",
+		delay:  fmt.Sprintf("%dms", result.delay),
+	}
+}
+
+func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
+	nodeWidth := 0
+	statusWidth := 0
+	for _, row := range rows {
+		nodeWidth = max(nodeWidth, displayWidth(row.node))
+		statusWidth = max(statusWidth, displayWidth(row.status))
+	}
+	for _, row := range rows {
+		_, err := fmt.Fprintf(
+			w,
+			"%s%s  %s%s  %s\n",
+			row.node,
+			spacesForDisplayWidth(nodeWidth-displayWidth(row.node)),
+			row.status,
+			spacesForDisplayWidth(statusWidth-displayWidth(row.status)),
+			row.delay,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func spacesForDisplayWidth(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return strings.Repeat(" ", width)
+}
+
+func displayWidth(text string) int {
+	width := 0
+	runes := []rune(text)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if unicode.Is(unicode.Mn, r) || r == '‍' || isVariationSelector(r) || isEmojiModifier(r) {
+			continue
+		}
+		if isRegionalIndicator(r) && i+1 < len(runes) && isRegionalIndicator(runes[i+1]) {
+			width += 2
+			i++
+			continue
+		}
+		if isEmojiSequenceStart(runes, i) {
+			width += 2
+			i = skipEmojiSequence(runes, i)
+			continue
+		}
+		if isWideRune(r) {
+			width += 2
+			continue
+		}
+		width++
+	}
+	return width
+}
+
+func isWideRune(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x115F:
+		return true
+	case r >= 0x2329 && r <= 0x232A:
+		return true
+	case r >= 0x2E80 && r <= 0xA4CF:
+		return true
+	case r >= 0xAC00 && r <= 0xD7A3:
+		return true
+	case r >= 0xF900 && r <= 0xFAFF:
+		return true
+	case r >= 0xFE10 && r <= 0xFE19:
+		return true
+	case r >= 0xFE30 && r <= 0xFE6F:
+		return true
+	case r >= 0xFF00 && r <= 0xFF60:
+		return true
+	case r >= 0xFFE0 && r <= 0xFFE6:
+		return true
+	case isWideSymbolRune(r):
+		return true
+	case r >= 0x1F300 && r <= 0x1FAFF:
+		return true
+	default:
+		return false
+	}
+}
+
+func isWideSymbolRune(r rune) bool {
+	switch {
+	case r >= 0x2614 && r <= 0x2615:
+		return true
+	case r >= 0x2630 && r <= 0x2637:
+		return true
+	case r >= 0x2648 && r <= 0x2653:
+		return true
+	case r == 0x267F:
+		return true
+	case r >= 0x268A && r <= 0x268F:
+		return true
+	case r == 0x2693 || r == 0x26A1:
+		return true
+	case r >= 0x26AA && r <= 0x26AB:
+		return true
+	case r >= 0x26BD && r <= 0x26BE:
+		return true
+	case r >= 0x26C4 && r <= 0x26C5:
+		return true
+	case r == 0x26CE || r == 0x26D4 || r == 0x26EA:
+		return true
+	case r >= 0x26F2 && r <= 0x26F3:
+		return true
+	case r == 0x26F5 || r == 0x26FA || r == 0x26FD:
+		return true
+	case r == 0x2705:
+		return true
+	case r >= 0x270A && r <= 0x270B:
+		return true
+	case r == 0x2728 || r == 0x274C || r == 0x274E:
+		return true
+	case r >= 0x2753 && r <= 0x2755:
+		return true
+	case r == 0x2757:
+		return true
+	case r >= 0x2795 && r <= 0x2797:
+		return true
+	case r == 0x27B0 || r == 0x27BF:
+		return true
+	default:
+		return false
+	}
+}
+
+func isEmojiSequenceStart(runes []rune, index int) bool {
+	if isEmojiRune(runes[index]) {
+		return true
+	}
+	return isEmojiVariationBase(runes[index]) && index+1 < len(runes) && runes[index+1] == 0xFE0F
+}
+
+func skipEmojiSequence(runes []rune, index int) int {
+	index = skipEmojiMarks(runes, index)
+	for index+2 < len(runes) && runes[index+1] == '‍' && isEmojiSequenceStart(runes, index+2) {
+		index = skipEmojiMarks(runes, index+2)
+	}
+	return index
+}
+
+func skipEmojiMarks(runes []rune, index int) int {
+	for index+1 < len(runes) && (isVariationSelector(runes[index+1]) || isEmojiModifier(runes[index+1])) {
+		index++
+	}
+	return index
+}
+
+func isEmojiRune(r rune) bool {
+	return r >= 0x1F300 && r <= 0x1FAFF
+}
+
+func isEmojiVariationBase(r rune) bool {
+	return r >= 0x2600 && r <= 0x27BF
+}
+
+func isEmojiModifier(r rune) bool {
+	return r >= 0x1F3FB && r <= 0x1F3FF
+}
+
+func isRegionalIndicator(r rune) bool {
+	return r >= 0x1F1E6 && r <= 0x1F1FF
+}
+
+func isVariationSelector(r rune) bool {
+	return r >= 0xFE00 && r <= 0xFE0F
 }
 
 // Run launches a temporary isolated browser session.

@@ -1519,6 +1519,53 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 	}
 }
 
+func TestNodesAlignsStatusColumnForWideNodeNames(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["plain","香港节点","dead"]}`))
+		case "/proxies/plain/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":12}`))
+		case "/proxies/香港节点/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":7}`))
+		case "/proxies/dead/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 3
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	want := "NODE      STATUS     DELAY\n" +
+		"香港节点  ok         7ms\n" +
+		"plain     ok         12ms\n" +
+		"dead      unhealthy  -\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("nodes output mismatch:\ngot:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -2060,6 +2107,32 @@ func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 	}
 	if !strings.Contains(out, `evil\nnode\t\x1b[31mred\rend`) {
 		t.Fatalf("nodes output missing sanitized node name: %q", out)
+	}
+}
+
+func TestDisplayWidthHandlesWideAndEscapedText(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{name: "ascii", text: "plain", want: 5},
+		{name: "han", text: "香港节点", want: 8},
+		{name: "regional flag pair", text: "🇭🇰", want: 2},
+		{name: "emoji with variation selector", text: "✈️", want: 2},
+		{name: "wide emoji presentation symbol", text: "❕", want: 2},
+		{name: "zwj family sequence", text: "👨‍👩‍👧‍👦", want: 2},
+		{name: "skin tone emoji", text: "👍🏽", want: 2},
+		{name: "escaped tab", text: `node\t1`, want: 7},
+		{name: "combining mark", text: "é", want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := displayWidth(tt.text); got != tt.want {
+				t.Fatalf("displayWidth(%q) = %d, want %d", tt.text, got, tt.want)
+			}
+		})
 	}
 }
 
