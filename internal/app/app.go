@@ -278,8 +278,15 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 
 	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
 	sortNodeDelayResults(results)
+	displayResults := filterNodeDelayResults(results, opts.ShowUnhealthyNodes)
+	outputOptions := nodeDelayOutputOptions{
+		total:            len(results),
+		healthy:          countHealthyNodeDelayResults(results),
+		currentNode:      group.Now,
+		highlightCurrent: opts.HighlightCurrentNode,
+	}
 
-	if err := writeNodeDelayResults(a.stdout, results); err != nil {
+	if err := writeNodeDelayResults(a.stdout, displayResults, outputOptions); err != nil {
 		return err
 	}
 	if !opts.SelectFastest {
@@ -430,34 +437,73 @@ func sortNodeDelayResults(results []nodeDelayResult) {
 	})
 }
 
-type nodeDelayRow struct {
-	node   string
-	status string
-	delay  string
+func filterNodeDelayResults(results []nodeDelayResult, showUnhealthy bool) []nodeDelayResult {
+	if showUnhealthy {
+		return results
+	}
+	filtered := make([]nodeDelayResult, 0, len(results))
+	for _, result := range results {
+		if result.healthy {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }
 
-func writeNodeDelayResults(w io.Writer, results []nodeDelayResult) error {
+func countHealthyNodeDelayResults(results []nodeDelayResult) int {
+	healthy := 0
+	for _, result := range results {
+		if result.healthy {
+			healthy++
+		}
+	}
+	return healthy
+}
+
+const (
+	currentNodeRowColor = "\x1b[1;36m"
+	ansiReset           = "\x1b[0m"
+)
+
+type nodeDelayOutputOptions struct {
+	total            int
+	healthy          int
+	currentNode      string
+	highlightCurrent bool
+}
+
+type nodeDelayRow struct {
+	node      string
+	status    string
+	delay     string
+	highlight bool
+}
+
+func writeNodeDelayResults(w io.Writer, results []nodeDelayResult, options nodeDelayOutputOptions) error {
+	if _, err := fmt.Fprintf(w, "nodes: total %d, ok %d, shown %d\n", options.total, options.healthy, len(results)); err != nil {
+		return err
+	}
 	rows := make([]nodeDelayRow, 0, len(results)+1)
 	rows = append(rows, nodeDelayRow{node: "NODE", status: "STATUS", delay: "DELAY"})
 	for _, result := range results {
-		rows = append(rows, nodeDelayResultRow(result))
+		rows = append(rows, nodeDelayResultRow(result, options.currentNode, options.highlightCurrent))
 	}
 	return writeFixedWidthRows(w, rows)
 }
 
-func nodeDelayResultRow(result nodeDelayResult) nodeDelayRow {
+func nodeDelayResultRow(result nodeDelayResult, currentNode string, highlightCurrent bool) nodeDelayRow {
+	row := nodeDelayRow{
+		node:      sanitizeDisplayName(result.name),
+		highlight: highlightCurrent && currentNode != "" && result.name == currentNode,
+	}
 	if !result.healthy {
-		return nodeDelayRow{
-			node:   sanitizeDisplayName(result.name),
-			status: "unhealthy",
-			delay:  "-",
-		}
+		row.status = "unhealthy"
+		row.delay = "-"
+		return row
 	}
-	return nodeDelayRow{
-		node:   sanitizeDisplayName(result.name),
-		status: "ok",
-		delay:  fmt.Sprintf("%dms", result.delay),
-	}
+	row.status = "ok"
+	row.delay = fmt.Sprintf("%dms", result.delay)
+	return row
 }
 
 func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
@@ -468,16 +514,18 @@ func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
 		statusWidth = max(statusWidth, displayWidth(row.status))
 	}
 	for _, row := range rows {
-		_, err := fmt.Fprintf(
-			w,
-			"%s%s  %s%s  %s\n",
+		line := fmt.Sprintf(
+			"%s%s  %s%s  %s",
 			row.node,
 			spacesForDisplayWidth(nodeWidth-displayWidth(row.node)),
 			row.status,
 			spacesForDisplayWidth(statusWidth-displayWidth(row.status)),
 			row.delay,
 		)
-		if err != nil {
+		if row.highlight {
+			line = currentNodeRowColor + line + ansiReset
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}

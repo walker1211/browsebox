@@ -1649,6 +1649,7 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.TargetURL = "https://target.example"
+	opts.ShowUnhealthyNodes = true
 
 	if err := application.Nodes(context.Background(), opts); err != nil {
 		t.Fatalf("Nodes returned error: %v", err)
@@ -1659,6 +1660,243 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 
 	out := stdout.String()
 	for _, want := range []string{"NODE", "STATUS", "DELAY", "fast-node", "ok", "42ms", "slow-node", "unhealthy"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nodes output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestNodesHidesUnhealthyByDefaultAndPrintsSummary(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["slow-node","dead-node","fast-node"]}`))
+		case "/proxies/slow-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":90}`))
+		case "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 3
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"nodes: total 3, ok 2, shown 2", "NODE", "STATUS", "DELAY", "fast-node", "ok", "10ms", "slow-node", "90ms"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nodes output missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"dead-node", "unhealthy"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("nodes output contains hidden unhealthy value %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestNodesHighlightsVisibleCurrentNode(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","now":"current-node","all":["other-node","current-node"]}`))
+		case "/proxies/other-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":30}`))
+		case "/proxies/current-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "\x1b[1;36mcurrent-node") {
+		t.Fatalf("nodes output did not color current node:\n%q", out)
+	}
+	if !strings.Contains(out, "10ms\x1b[0m") {
+		t.Fatalf("nodes output did not reset color after current row:\n%q", out)
+	}
+	if strings.Contains(out, "CURRENT") {
+		t.Fatalf("nodes output added unexpected CURRENT column:\n%s", out)
+	}
+}
+
+func TestNodesCanDisableCurrentNodeHighlight(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","now":"current-node","all":["current-node"]}`))
+		case "/proxies/current-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.HighlightCurrentNode = false
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("nodes output unexpectedly contains ANSI styling:\n%q", out)
+	}
+	if !strings.Contains(out, "current-node") {
+		t.Fatalf("nodes output missing current node:\n%s", out)
+	}
+}
+
+func TestNodesDoesNotShowHiddenUnhealthyCurrentNode(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","now":"dead-node","all":["fast-node","dead-node"]}`))
+		case "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "nodes: total 2, ok 1, shown 1") {
+		t.Fatalf("nodes output missing summary:\n%s", out)
+	}
+	if strings.Contains(out, "dead-node") {
+		t.Fatalf("nodes output contains hidden unhealthy current node:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("nodes output unexpectedly contains ANSI styling:\n%q", out)
+	}
+}
+
+func TestNodesShowUnhealthyOptionPreservesUnhealthyRows(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+
+		switch r.URL.Path {
+		case "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["fast-node","dead-node"]}`))
+		case "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case "/proxies/dead-node/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+	opts.ShowUnhealthyNodes = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"nodes: total 2, ok 1, shown 2", "fast-node", "ok", "10ms", "dead-node", "unhealthy"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("nodes output missing %q:\n%s", want, out)
 		}
@@ -1695,6 +1933,7 @@ func TestNodesAlignsStatusColumnForWideNodeNames(t *testing.T) {
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
+	opts.ShowUnhealthyNodes = true
 
 	if err := application.Nodes(context.Background(), opts); err != nil {
 		t.Fatalf("Nodes returned error: %v", err)
@@ -1703,7 +1942,8 @@ func TestNodesAlignsStatusColumnForWideNodeNames(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := "NODE      STATUS     DELAY\n" +
+	want := "nodes: total 3, ok 2, shown 3\n" +
+		"NODE      STATUS     DELAY\n" +
 		"香港节点  ok         7ms\n" +
 		"plain     ok         12ms\n" +
 		"dead      unhealthy  -\n"
@@ -1743,6 +1983,7 @@ func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
+	opts.ShowUnhealthyNodes = true
 
 	if err := application.Nodes(context.Background(), opts); err != nil {
 		t.Fatalf("Nodes returned error: %v", err)
@@ -1805,6 +2046,7 @@ func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
+	opts.ShowUnhealthyNodes = true
 	opts.SelectFastest = true
 
 	if err := application.Nodes(context.Background(), opts); err != nil {
@@ -1929,8 +2171,11 @@ func TestNodesSelectFastestReturnsErrorWhenNoHealthyNodes(t *testing.T) {
 	}
 
 	out := stdout.String()
-	if !strings.Contains(out, "dead-node") || !strings.Contains(out, "unhealthy") {
-		t.Fatalf("unhealthy table was not printed before error:\n%s", out)
+	if !strings.Contains(out, "nodes: total 1, ok 0, shown 0") || !strings.Contains(out, "NODE") {
+		t.Fatalf("filtered table summary was not printed before error:\n%s", out)
+	}
+	if strings.Contains(out, "dead-node") || strings.Contains(out, "unhealthy") {
+		t.Fatalf("default nodes output should hide unhealthy rows before error:\n%s", out)
 	}
 }
 
@@ -2405,8 +2650,8 @@ func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 	if strings.Contains(out, unsafeNode) {
 		t.Fatalf("nodes output contains unsafe raw node name: %q", out)
 	}
-	if strings.Count(out, "\n") != 2 {
-		t.Fatalf("nodes output should contain only header and one data row, got %d newlines in %q", strings.Count(out, "\n"), out)
+	if strings.Count(out, "\n") != 3 {
+		t.Fatalf("nodes output should contain summary, header, and one data row, got %d newlines in %q", strings.Count(out, "\n"), out)
 	}
 	for _, unsafe := range []string{"\t", "\r", "\x1b"} {
 		if strings.Contains(out, unsafe) {
