@@ -74,7 +74,7 @@ List proxy groups:
 ./browsebox groups
 ```
 
-Check node delays concurrently; healthy nodes are sorted by ascending delay and failed nodes are listed last:
+Check node delays concurrently; unhealthy nodes are hidden by default and healthy nodes are sorted by ascending delay. When `--show-unhealthy=true` is used, unhealthy nodes are shown after healthy nodes:
 
 ```bash
 ./browsebox nodes --group "<group>"
@@ -157,6 +157,8 @@ Common configuration options:
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
+- `--show-unhealthy=true|false`: whether `nodes` shows unhealthy nodes, defaulting to `false` so only available nodes are shown.
+- `--highlight-current=true|false`: whether `nodes` color-highlights the current node, defaulting to `true`; hidden current nodes are not shown separately.
 - `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch `<group>` in the main controller to the lowest-delay healthy node.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 

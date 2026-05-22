@@ -50,6 +50,8 @@ Flags:
   --health-url url          Health check URL; repeat to set multiple URLs
   --nodes-concurrency n     Concurrent node delay checks
   --delay-timeout-ms ms     Mihomo delay check timeout in milliseconds
+  --show-unhealthy bool    Show unhealthy nodes in nodes output
+  --highlight-current bool Highlight the current node in nodes output
   --select-fastest          Select the lowest-delay healthy node in the main controller after nodes checks
 `
 
@@ -190,6 +192,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.Var(&healthURLFlag{values: &opts.HealthURLs}, "health-url", "health check URL; repeat to set multiple URLs")
 	flags.IntVar(&opts.NodesConcurrency, "nodes-concurrency", opts.NodesConcurrency, "concurrent node delay checks")
 	flags.IntVar(&opts.DelayTimeoutMS, "delay-timeout-ms", opts.DelayTimeoutMS, "mihomo delay check timeout in milliseconds")
+	flags.BoolVar(&opts.ShowUnhealthyNodes, "show-unhealthy", opts.ShowUnhealthyNodes, "show unhealthy nodes in nodes output")
+	flags.BoolVar(&opts.HighlightCurrentNode, "highlight-current", opts.HighlightCurrentNode, "highlight the current node in nodes output")
 	flags.BoolVar(&opts.SelectFastest, "select-fastest", opts.SelectFastest, "select the lowest-delay healthy node in the main controller after nodes checks")
 
 	return flags

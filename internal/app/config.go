@@ -208,6 +208,23 @@ func applySessionConfig(key, value string, opts *Options) error {
 }
 
 func applyNodesConfig(key, value string, opts *Options) error {
+	switch key {
+	case "show_unhealthy", "show-unhealthy":
+		showUnhealthy, err := strconv.ParseBool(cleanConfigString(value))
+		if err != nil {
+			return fmt.Errorf("%s must be true or false", key)
+		}
+		opts.ShowUnhealthyNodes = showUnhealthy
+		return nil
+	case "highlight_current", "highlight-current":
+		highlightCurrent, err := strconv.ParseBool(cleanConfigString(value))
+		if err != nil {
+			return fmt.Errorf("%s must be true or false", key)
+		}
+		opts.HighlightCurrentNode = highlightCurrent
+		return nil
+	}
+
 	intValue, ok, err := parsePositiveConfigInt(key, value)
 	if err != nil || !ok {
 		return err

@@ -38,3 +38,5 @@ session:
 nodes:
   concurrency: 16
   delay_timeout_ms: 5000
+  show_unhealthy: false
+  highlight_current: true
