@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -230,8 +231,10 @@ func TestPrepareMihomoDataFilesRefreshesCacheAndCopiesIntoRuntime(t *testing.T) 
 	if err != nil {
 		t.Fatalf("stat cache dir: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o700 {
-		t.Fatalf("cache dir mode = %o, want 700", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf("cache dir mode = %o, want 700", got)
+		}
 	}
 
 	if err := os.WriteFile(filepath.Join(sourceDir, "geosite.dat"), []byte("geosite-v2-new"), 0o600); err != nil {
@@ -263,6 +266,9 @@ func TestPrepareMihomoDataFilesSkipsSymlinkSourceData(t *testing.T) {
 		t.Fatalf("write secret: %v", err)
 	}
 	if err := os.Symlink(secretPath, filepath.Join(sourceDir, "geosite.dat")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable: %v", err)
+		}
 		t.Fatalf("create source symlink: %v", err)
 	}
 	runtimeDir := filepath.Join(tempDir, "runtime")
@@ -300,6 +306,9 @@ func TestPrepareMihomoDataFilesRefusesSymlinkCacheEntry(t *testing.T) {
 		t.Fatalf("write secret: %v", err)
 	}
 	if err := os.Symlink(secretPath, filepath.Join(cacheDir, "geosite.dat")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable: %v", err)
+		}
 		t.Fatalf("create cache symlink: %v", err)
 	}
 	runtimeDir := filepath.Join(tempDir, "runtime")
@@ -1500,6 +1509,7 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.TargetURL = "https://target.example"
@@ -1546,6 +1556,7 @@ func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
@@ -1607,6 +1618,7 @@ func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
@@ -1673,6 +1685,7 @@ func TestNodesSelectFastestUsesLookupGroupWhenResponseOmitsName(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1716,6 +1729,7 @@ func TestNodesSelectFastestReturnsErrorWhenNoHealthyNodes(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1757,6 +1771,7 @@ func TestNodesSelectFastestReturnsErrorWhenControllerRejectsSelection(t *testing
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1830,6 +1845,7 @@ func TestNodesRespectsConcurrencyLimitAndDelayTimeout(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 2
@@ -1882,6 +1898,7 @@ func TestNodesReturnsClearErrorWhenGroupLookupFails(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 
 	err := application.Nodes(context.Background(), opts)
@@ -1910,6 +1927,7 @@ func TestNodesReturnsWhenControllerStalls(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -1953,6 +1971,7 @@ func TestGroupsListsProxyGroupsWithoutMutatingMainController(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 
 	if err := application.Groups(context.Background(), opts); err != nil {
 		t.Fatalf("Groups returned error: %v", err)
@@ -1997,6 +2016,7 @@ func TestGroupsSanitizesControlCharactersInGroupNames(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 
 	if err := application.Groups(context.Background(), opts); err != nil {
 		t.Fatalf("Groups returned error: %v", err)
@@ -2039,6 +2059,7 @@ func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 
@@ -2066,7 +2087,7 @@ func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 func startAppUnixHTTPServer(t *testing.T, handler http.Handler) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("/tmp", "browsebox-app-test-*")
+	dir, err := os.MkdirTemp(".", "browsebox-app-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}

@@ -3,6 +3,7 @@ package browser
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -111,8 +112,10 @@ func TestEnsureUserDataDirCreatesPrivateDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat profile dir: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o700 {
-		t.Fatalf("profile dir mode = %o, want 0700", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf("profile dir mode = %o, want 0700", got)
+		}
 	}
 }
 

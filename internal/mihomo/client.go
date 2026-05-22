@@ -16,6 +16,7 @@ import (
 // Client reads mihomo controller state over a Unix socket.
 type Client struct {
 	socketPath string
+	pipePath   string
 	baseURL    string
 	httpClient *http.Client
 }

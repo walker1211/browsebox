@@ -29,6 +29,8 @@ Commands:
 
 Flags:
   --controller-socket path  Controller Unix socket path
+  --controller-url url      Controller HTTP URL for localhost TCP access
+  --controller-pipe path    Controller Windows named pipe path
   --config path             Source mihomo config path
   --runtime-dir path        Runtime directory for temporary files
   --runtime-cache-dir path  Cache directory for mihomo geodata files
@@ -103,9 +105,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if commandFlags.NArg() > 0 {
-		fmt.Fprintf(stderr, "error: unexpected argument %q for command %q\n\n", commandFlags.Arg(0), command)
-		printUsage(stderr)
-		return 2
+		if command == "nodes" && commandFlags.NArg() == 1 {
+			opts.TargetURL = commandFlags.Arg(0)
+			opts.HealthURLs = []string{commandFlags.Arg(0)}
+		} else {
+			fmt.Fprintf(stderr, "error: unexpected argument %q for command %q\n\n", commandFlags.Arg(0), command)
+			printUsage(stderr)
+			return 2
+		}
 	}
 
 	application := app.New(stdout, stderr)
@@ -167,6 +174,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.Usage = func() {}
 
 	flags.StringVar(&opts.ControllerSocket, "controller-socket", opts.ControllerSocket, "controller Unix socket path")
+	flags.StringVar(&opts.ControllerURL, "controller-url", opts.ControllerURL, "controller HTTP URL for localhost TCP access")
+	flags.StringVar(&opts.ControllerPipe, "controller-pipe", opts.ControllerPipe, "controller Windows named pipe path")
 	flags.StringVar(&opts.SourceConfigPath, "config", opts.SourceConfigPath, "source mihomo config path")
 	flags.StringVar(&opts.RuntimeDir, "runtime-dir", opts.RuntimeDir, "runtime directory for temporary files")
 	flags.StringVar(&opts.RuntimeCacheDir, "runtime-cache-dir", opts.RuntimeCacheDir, "cache directory for mihomo geodata files")

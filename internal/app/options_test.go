@@ -9,6 +9,7 @@ import (
 func TestDefaultSourceConfigPathPrefersGenericMihomoConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	genericPath := filepath.Join(home, ".config", "mihomo", "config.yaml")
 	clashVergePath := filepath.Join(home, "Library", "Application Support", "io.github.clash-verge-rev.clash-verge-rev", "clash-verge.yaml")
 	writeFile(t, genericPath)
@@ -23,6 +24,7 @@ func TestDefaultSourceConfigPathPrefersGenericMihomoConfig(t *testing.T) {
 func TestDefaultSourceConfigPathFallsBackToClashVergeConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	clashVergePath := filepath.Join(home, "Library", "Application Support", "io.github.clash-verge-rev.clash-verge-rev", "clash-verge.yaml")
 	writeFile(t, clashVergePath)
 
@@ -35,6 +37,7 @@ func TestDefaultSourceConfigPathFallsBackToClashVergeConfig(t *testing.T) {
 func TestDefaultSourceConfigPathReturnsGenericPathWhenNoCandidateExists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	want := filepath.Join(home, ".config", "mihomo", "config.yaml")
 
 	got := defaultSourceConfigPath()
