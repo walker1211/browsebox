@@ -105,14 +105,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if commandFlags.NArg() > 0 {
-		if command == "nodes" && commandFlags.NArg() == 1 {
-			opts.TargetURL = commandFlags.Arg(0)
-			opts.HealthURLs = []string{commandFlags.Arg(0)}
-		} else {
-			fmt.Fprintf(stderr, "error: unexpected argument %q for command %q\n\n", commandFlags.Arg(0), command)
-			printUsage(stderr)
-			return 2
-		}
+		fmt.Fprintf(stderr, "error: unexpected argument %q for command %q\n\n", commandFlags.Arg(0), command)
+		printUsage(stderr)
+		return 2
 	}
 
 	application := app.New(stdout, stderr)

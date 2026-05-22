@@ -62,6 +62,7 @@ func DefaultOptions() Options {
 		},
 	}
 	if runtime.GOOS == "windows" {
+		opts.ControllerSocket = ""
 		opts.ControllerPipe = `\\.\pipe\verge-mihomo`
 	}
 	return opts
