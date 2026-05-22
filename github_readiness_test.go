@@ -2,6 +2,7 @@ package browsebox
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -107,7 +108,7 @@ func TestGitHubReadinessScriptUsesDedicatedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected %s to exist: %v", path, err)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("expected %s to be executable", path)
 	}
 	for _, want := range []string{
