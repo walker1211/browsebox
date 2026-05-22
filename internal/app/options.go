@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/walker1211/browsebox/internal/browser"
 	"github.com/walker1211/browsebox/internal/mihomo"
@@ -11,6 +12,8 @@ import (
 // Options contains browsebox runtime settings parsed by the CLI.
 type Options struct {
 	ControllerSocket string
+	ControllerURL    string
+	ControllerPipe   string
 	SourceConfigPath string
 	RuntimeDir       string
 	RuntimeCacheDir  string
@@ -35,7 +38,7 @@ type Options struct {
 
 // DefaultOptions returns safe macOS-oriented defaults for browsebox.
 func DefaultOptions() Options {
-	return Options{
+	opts := Options{
 		ControllerSocket: "/tmp/verge/verge-mihomo.sock",
 		SourceConfigPath: defaultSourceConfigPath(),
 		StateDir:         defaultStateDir(),
@@ -58,6 +61,11 @@ func DefaultOptions() Options {
 			"https://abs.twimg.com",
 		},
 	}
+	if runtime.GOOS == "windows" {
+		opts.ControllerSocket = ""
+		opts.ControllerPipe = `\\.\pipe\verge-mihomo`
+	}
+	return opts
 }
 
 func defaultSourceConfigPath() string {

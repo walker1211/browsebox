@@ -29,6 +29,8 @@ Commands:
 
 Flags:
   --controller-socket path  Controller Unix socket path
+  --controller-url url      Controller HTTP URL for localhost TCP access
+  --controller-pipe path    Controller Windows named pipe path
   --config path             Source mihomo config path
   --runtime-dir path        Runtime directory for temporary files
   --runtime-cache-dir path  Cache directory for mihomo geodata files
@@ -167,6 +169,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.Usage = func() {}
 
 	flags.StringVar(&opts.ControllerSocket, "controller-socket", opts.ControllerSocket, "controller Unix socket path")
+	flags.StringVar(&opts.ControllerURL, "controller-url", opts.ControllerURL, "controller HTTP URL for localhost TCP access")
+	flags.StringVar(&opts.ControllerPipe, "controller-pipe", opts.ControllerPipe, "controller Windows named pipe path")
 	flags.StringVar(&opts.SourceConfigPath, "config", opts.SourceConfigPath, "source mihomo config path")
 	flags.StringVar(&opts.RuntimeDir, "runtime-dir", opts.RuntimeDir, "runtime directory for temporary files")
 	flags.StringVar(&opts.RuntimeCacheDir, "runtime-cache-dir", opts.RuntimeCacheDir, "cache directory for mihomo geodata files")

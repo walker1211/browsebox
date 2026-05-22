@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -34,15 +35,19 @@ func TestSaveLoadRoundTripCreatesPrivateFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat state dir: %v", err)
 	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("state dir mode = %o, want 700", got)
+	if runtime.GOOS != "windows" {
+		if got := dirInfo.Mode().Perm(); got != 0o700 {
+			t.Fatalf("state dir mode = %o, want 700", got)
+		}
 	}
 	fileInfo, err := os.Stat(Path(dir))
 	if err != nil {
 		t.Fatalf("stat state file: %v", err)
 	}
-	if got := fileInfo.Mode().Perm(); got != 0o600 {
-		t.Fatalf("state file mode = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := fileInfo.Mode().Perm(); got != 0o600 {
+			t.Fatalf("state file mode = %o, want 600", got)
+		}
 	}
 
 	got, err := Load(dir)
@@ -78,15 +83,19 @@ func TestSaveTightensExistingLoosePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat state dir: %v", err)
 	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("state dir mode = %o, want 700", got)
+	if runtime.GOOS != "windows" {
+		if got := dirInfo.Mode().Perm(); got != 0o700 {
+			t.Fatalf("state dir mode = %o, want 700", got)
+		}
 	}
 	fileInfo, err := os.Stat(Path(dir))
 	if err != nil {
 		t.Fatalf("stat state file: %v", err)
 	}
-	if got := fileInfo.Mode().Perm(); got != 0o600 {
-		t.Fatalf("state file mode = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := fileInfo.Mode().Perm(); got != 0o600 {
+			t.Fatalf("state file mode = %o, want 600", got)
+		}
 	}
 	got, err := Load(dir)
 	if err != nil {

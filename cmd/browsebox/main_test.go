@@ -86,6 +86,22 @@ func TestTargetURLFlagStillWorks(t *testing.T) {
 	}
 }
 
+func TestNodesRejectsUnexpectedPositionalArgument(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"nodes", "https://example.com"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("run returned %d, want 2; stderr = %q", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unexpected argument \"https://example.com\" for command \"nodes\"") {
+		t.Fatalf("stderr = %q, want unexpected argument message", stderr.String())
+	}
+}
+
 func TestNodeTuningFlagsParse(t *testing.T) {
 	opts := app.DefaultOptions()
 	flags := newFlagSet("browsebox nodes", &opts)

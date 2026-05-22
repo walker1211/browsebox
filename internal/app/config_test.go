@@ -11,6 +11,8 @@ func TestLoadConfigFileAppliesRuntimeSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := []byte(`mihomo:
   controller_socket: /tmp/browsebox.sock
+  controller_url: http://127.0.0.1:9097
+  controller_pipe: \\.\pipe\verge-mihomo
   config_path: ~/mihomo/config.yaml
   binary_path: ~/bin/mihomo
 browser:
@@ -57,6 +59,8 @@ nodes:
 
 	checks := map[string]bool{
 		"ControllerSocket": opts.ControllerSocket == "/tmp/browsebox.sock",
+		"ControllerURL":    opts.ControllerURL == "http://127.0.0.1:9097",
+		"ControllerPipe":   opts.ControllerPipe == `\\.\pipe\verge-mihomo`,
 		"SourceConfigPath": opts.SourceConfigPath == filepath.Join(home, "mihomo", "config.yaml"),
 		"MihomoBinaryPath": opts.MihomoBinaryPath == filepath.Join(home, "bin", "mihomo"),
 		"ChromeBinaryPath": opts.ChromeBinaryPath == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

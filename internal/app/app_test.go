@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +66,40 @@ func TestStartRequiresNodeBeforeReadingConfigOrState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--node is required") {
 		t.Fatalf("Start error = %q, want clear --node validation", err.Error())
+	}
+}
+
+func TestValidateLocalControllerURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		rawURL  string
+		wantErr bool
+	}{
+		{name: "localhost", rawURL: "http://localhost:9097"},
+		{name: "ipv4 localhost", rawURL: "http://127.0.0.1:9097"},
+		{name: "ipv6 localhost", rawURL: "http://[::1]:9097"},
+		{name: "reject invalid localhost port", rawURL: "http://localhost:badport", wantErr: true},
+		{name: "reject zero localhost port", rawURL: "http://localhost:0", wantErr: true},
+		{name: "reject out of range localhost port", rawURL: "http://localhost:99999", wantErr: true},
+		{name: "reject https", rawURL: "https://localhost:9097", wantErr: true},
+		{name: "reject remote host", rawURL: "http://example.com:9097", wantErr: true},
+		{name: "reject localhost suffix", rawURL: "http://localhost.example.com:9097", wantErr: true},
+		{name: "reject missing host", rawURL: "http:///missing-host", wantErr: true},
+		{name: "reject malformed scheme", rawURL: "://bad", wantErr: true},
+		{name: "reject localhost userinfo to remote host", rawURL: "http://localhost@evil.example:9097", wantErr: true},
+		{name: "reject userinfo on localhost", rawURL: "http://user:pass@localhost:9097", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateLocalControllerURL(tt.rawURL)
+			if tt.wantErr && err == nil {
+				t.Fatalf("validateLocalControllerURL(%q) returned nil error, want error", tt.rawURL)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("validateLocalControllerURL(%q) returned error: %v", tt.rawURL, err)
+			}
+		})
 	}
 }
 
@@ -230,8 +265,10 @@ func TestPrepareMihomoDataFilesRefreshesCacheAndCopiesIntoRuntime(t *testing.T) 
 	if err != nil {
 		t.Fatalf("stat cache dir: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o700 {
-		t.Fatalf("cache dir mode = %o, want 700", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf("cache dir mode = %o, want 700", got)
+		}
 	}
 
 	if err := os.WriteFile(filepath.Join(sourceDir, "geosite.dat"), []byte("geosite-v2-new"), 0o600); err != nil {
@@ -263,6 +300,9 @@ func TestPrepareMihomoDataFilesSkipsSymlinkSourceData(t *testing.T) {
 		t.Fatalf("write secret: %v", err)
 	}
 	if err := os.Symlink(secretPath, filepath.Join(sourceDir, "geosite.dat")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable: %v", err)
+		}
 		t.Fatalf("create source symlink: %v", err)
 	}
 	runtimeDir := filepath.Join(tempDir, "runtime")
@@ -300,6 +340,9 @@ func TestPrepareMihomoDataFilesRefusesSymlinkCacheEntry(t *testing.T) {
 		t.Fatalf("write secret: %v", err)
 	}
 	if err := os.Symlink(secretPath, filepath.Join(cacheDir, "geosite.dat")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable: %v", err)
+		}
 		t.Fatalf("create cache symlink: %v", err)
 	}
 	runtimeDir := filepath.Join(tempDir, "runtime")
@@ -1496,6 +1539,7 @@ func TestNodesUsesOnlyGETAndPrintsCandidateDelays(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.TargetURL = "https://target.example"
@@ -1589,6 +1633,7 @@ func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
@@ -1650,6 +1695,7 @@ func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 3
@@ -1716,6 +1762,7 @@ func TestNodesSelectFastestUsesLookupGroupWhenResponseOmitsName(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1759,6 +1806,7 @@ func TestNodesSelectFastestReturnsErrorWhenNoHealthyNodes(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1800,6 +1848,7 @@ func TestNodesSelectFastestReturnsErrorWhenControllerRejectsSelection(t *testing
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.SelectFastest = true
@@ -1873,6 +1922,7 @@ func TestNodesRespectsConcurrencyLimitAndDelayTimeout(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 	opts.NodesConcurrency = 2
@@ -1913,6 +1963,97 @@ func TestNodesRespectsConcurrencyLimitAndDelayTimeout(t *testing.T) {
 	}
 }
 
+func TestNodesResolvesSingleSuffixProxyGroup(t *testing.T) {
+	requests := make(chan string, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"Provider/All":{"name":"Provider/All","type":"Selector","all":["node-a"]},"Other":{"name":"Other","type":"Selector","all":["node-b"]}}}`))
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/proxies/Provider%2FAll":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"Provider/All","type":"Selector","all":["node-a"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/node-a/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":11}`))
+		case r.Method == http.MethodPut && r.URL.EscapedPath() == "/proxies/Provider%2FAll":
+			requests <- r.URL.EscapedPath()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got != "/proxies/Provider%2FAll" {
+			t.Fatalf("PUT path = %q, want resolved Provider/All group", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select fastest node in resolved group")
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"node-a", "11ms", "selected node-a (11ms) for group Provider/All"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nodes output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestNodesReturnsAmbiguousSuffixProxyGroupError(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"A/All":{"name":"A/All","type":"Selector","all":["node-a"]},"B/All":{"name":"B/All","type":"Selector","all":["node-b"]}}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+
+	err := application.Nodes(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Nodes returned nil error, want ambiguous proxy group error")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	for _, want := range []string{"ambiguous", "A/All", "B/All"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
 func TestNodesReturnsClearErrorWhenGroupLookupFails(t *testing.T) {
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1925,6 +2066,7 @@ func TestNodesReturnsClearErrorWhenGroupLookupFails(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 
 	err := application.Nodes(context.Background(), opts)
@@ -1953,6 +2095,7 @@ func TestNodesReturnsWhenControllerStalls(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -1978,6 +2121,66 @@ func TestNodesReturnsWhenControllerStalls(t *testing.T) {
 	}
 }
 
+func TestGroupsUsesControllerURLBeforeSocketOrPipe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Path != "/proxies" {
+			t.Fatalf("path = %q, want /proxies", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"proxies":{"node-a":{"name":"node-a","type":"Shadowsocks"},"url-group":{"name":"url-group","type":"Selector","all":["node-a"]}}}`))
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerURL = server.URL
+	opts.ControllerSocket = filepath.Join(t.TempDir(), "bogus-controller.sock")
+	opts.ControllerPipe = filepath.Join(t.TempDir(), "bogus-pipe")
+
+	if err := application.Groups(context.Background(), opts); err != nil {
+		t.Fatalf("Groups returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "url-group") {
+		t.Fatalf("groups output missing test group:\n%s", out)
+	}
+}
+
+func TestGroupsUsesControllerSocketBeforeControllerPipe(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected mutating request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Path != "/proxies" {
+			t.Fatalf("path = %q, want /proxies", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"proxies":{"node-a":{"name":"node-a","type":"Shadowsocks"},"socket-group":{"name":"socket-group","type":"Selector","all":["node-a"]}}}`))
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = filepath.Join(t.TempDir(), "bogus-pipe")
+
+	if err := application.Groups(context.Background(), opts); err != nil {
+		t.Fatalf("Groups returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "socket-group") {
+		t.Fatalf("groups output missing test group:\n%s", out)
+	}
+}
+
 func TestGroupsListsProxyGroupsWithoutMutatingMainController(t *testing.T) {
 	requests := make(chan string, 1)
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1996,6 +2199,7 @@ func TestGroupsListsProxyGroupsWithoutMutatingMainController(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 
 	if err := application.Groups(context.Background(), opts); err != nil {
 		t.Fatalf("Groups returned error: %v", err)
@@ -2040,6 +2244,7 @@ func TestGroupsSanitizesControlCharactersInGroupNames(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 
 	if err := application.Groups(context.Background(), opts); err != nil {
 		t.Fatalf("Groups returned error: %v", err)
@@ -2082,6 +2287,7 @@ func TestNodesSanitizesControlCharactersInNodeNames(t *testing.T) {
 	application := New(&stdout, &stderr)
 	opts := DefaultOptions()
 	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
 	opts.Group = "All"
 	opts.HealthURLs = []string{"https://health.example/ping"}
 
@@ -2135,7 +2341,7 @@ func TestDisplayWidthHandlesWideAndEscapedText(t *testing.T) {
 func startAppUnixHTTPServer(t *testing.T, handler http.Handler) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("/tmp", "browsebox-app-test-*")
+	dir, err := os.MkdirTemp(".", "browsebox-app-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}

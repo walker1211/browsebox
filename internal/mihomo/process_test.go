@@ -3,6 +3,7 @@ package mihomo
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -27,16 +28,20 @@ func TestWriteRuntimeConfigCreatesPrivateRuntimeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat runtime dir: %v", err)
 	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("runtime dir mode = %o, want 0700", got)
+	if runtime.GOOS != "windows" {
+		if got := dirInfo.Mode().Perm(); got != 0o700 {
+			t.Fatalf("runtime dir mode = %o, want 0700", got)
+		}
 	}
 
 	fileInfo, err := os.Stat(configPath)
 	if err != nil {
 		t.Fatalf("stat config: %v", err)
 	}
-	if got := fileInfo.Mode().Perm(); got != 0o600 {
-		t.Fatalf("config mode = %o, want 0600", got)
+	if runtime.GOOS != "windows" {
+		if got := fileInfo.Mode().Perm(); got != 0o600 {
+			t.Fatalf("config mode = %o, want 0600", got)
+		}
 	}
 	content, err := os.ReadFile(configPath)
 	if err != nil {

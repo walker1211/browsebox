@@ -173,7 +173,7 @@ func TestDelayEscapesNodePathAndQuery(t *testing.T) {
 func startUnixHTTPServer(t *testing.T, handler http.Handler) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("/tmp", "browsebox-mihomo-test-*")
+	dir, err := os.MkdirTemp(".", "browsebox-mihomo-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}

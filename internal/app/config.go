@@ -110,6 +110,10 @@ func applyMihomoConfig(key, value string, opts *Options) error {
 	switch key {
 	case "controller_socket", "controller-socket":
 		opts.ControllerSocket = expandConfigPath(value)
+	case "controller_url", "controller-url":
+		opts.ControllerURL = cleanConfigString(value)
+	case "controller_pipe", "controller-pipe":
+		opts.ControllerPipe = cleanConfigString(value)
 	case "config_path", "config-path", "config":
 		opts.SourceConfigPath = expandConfigPath(value)
 	case "binary_path", "binary-path", "binary":

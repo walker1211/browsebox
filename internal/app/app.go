@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -167,9 +168,60 @@ func New(stdout, stderr io.Writer) *App {
 	}
 }
 
+func controllerClient(opts Options) (*mihomo.Client, error) {
+	if opts.ControllerURL != "" {
+		if err := validateLocalControllerURL(opts.ControllerURL); err != nil {
+			return nil, err
+		}
+		return mihomo.NewTCPClient(opts.ControllerURL), nil
+	}
+	if opts.ControllerSocket != "" {
+		return mihomo.NewClient(opts.ControllerSocket), nil
+	}
+	if opts.ControllerPipe != "" {
+		return mihomo.NewPipeClient(opts.ControllerPipe), nil
+	}
+	return mihomo.NewClient(opts.ControllerSocket), nil
+}
+
+func validateLocalControllerURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("controller-url must be an http://localhost URL")
+	}
+	if parsed.Port() == "" && hasExplicitControllerPort(parsed.Host) {
+		return fmt.Errorf("controller-url port must be numeric")
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil {
+			return fmt.Errorf("controller-url port must be numeric")
+		}
+		if portNumber <= 0 || portNumber > 65535 {
+			return fmt.Errorf("controller-url port must be between 1 and 65535")
+		}
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return fmt.Errorf("controller-url must point to localhost")
+	}
+	return nil
+}
+
+func hasExplicitControllerPort(host string) bool {
+	if strings.HasPrefix(host, "[") {
+		closingBracket := strings.LastIndex(host, "]")
+		return closingBracket >= 0 && len(host) > closingBracket+1 && host[closingBracket+1] == ':'
+	}
+	return strings.Count(host, ":") == 1
+}
+
 // Groups lists available proxy groups.
 func (a *App) Groups(ctx context.Context, opts Options) error {
-	client := mihomo.NewClient(opts.ControllerSocket)
+	client, err := controllerClient(opts)
+	if err != nil {
+		return err
+	}
 	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
 	groups, err := client.ProxyGroups(groupCtx)
 	cancelGroup()
@@ -195,12 +247,28 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	client := mihomo.NewClient(opts.ControllerSocket)
-	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
-	group, err := client.ProxyGroup(groupCtx, opts.Group)
-	cancelGroup()
+	client, err := controllerClient(opts)
 	if err != nil {
-		return fmt.Errorf("lookup proxy group %q: %w", opts.Group, err)
+		return err
+	}
+	groupName := opts.Group
+	group, err := lookupProxyGroup(ctx, client, groupName)
+	if err != nil {
+		originalLookupErr := err
+		resolvedGroupName, resolveErr := resolveProxyGroupName(ctx, client, opts.Group)
+		if resolveErr == nil && resolvedGroupName != opts.Group {
+			groupName = resolvedGroupName
+			group, err = lookupProxyGroup(ctx, client, groupName)
+		} else {
+			var ambiguousErr *ambiguousProxyGroupError
+			if errors.As(resolveErr, &ambiguousErr) {
+				return ambiguousErr
+			}
+			err = originalLookupErr
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("lookup proxy group %q: %w", groupName, err)
 	}
 
 	targetURL := opts.TargetURL
@@ -217,7 +285,7 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 	if !opts.SelectFastest {
 		return nil
 	}
-	return a.selectFastestNode(ctx, client, opts.Group, results)
+	return a.selectFastestNode(ctx, client, groupName, results)
 }
 
 func (a *App) selectFastestNode(ctx context.Context, client *mihomo.Client, group string, results []nodeDelayResult) error {
@@ -256,6 +324,52 @@ func validateDelayTimeout(timeoutMS int) error {
 		return errors.New("--delay-timeout-ms must be a positive integer")
 	}
 	return nil
+}
+
+func lookupProxyGroup(ctx context.Context, client *mihomo.Client, name string) (mihomo.ProxyGroupInfo, error) {
+	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
+	group, err := client.ProxyGroup(groupCtx, name)
+	cancelGroup()
+	return group, err
+}
+
+type ambiguousProxyGroupError struct {
+	name    string
+	matches []string
+}
+
+func (e *ambiguousProxyGroupError) Error() string {
+	return fmt.Sprintf("proxy group %q is ambiguous: matches %s", e.name, strings.Join(e.matches, ", "))
+}
+
+func resolveProxyGroupName(ctx context.Context, client *mihomo.Client, name string) (string, error) {
+	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
+	groups, err := client.ProxyGroups(groupCtx)
+	cancelGroup()
+	if err != nil {
+		return "", fmt.Errorf("list proxy groups: %w", err)
+	}
+
+	for _, group := range groups {
+		if group.Name == name {
+			return group.Name, nil
+		}
+	}
+
+	var matches []string
+	for _, group := range groups {
+		if strings.HasSuffix(group.Name, name) {
+			matches = append(matches, group.Name)
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", &ambiguousProxyGroupError{name: name, matches: matches}
+	}
+	return name, nil
 }
 
 func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURL string, concurrency, timeoutMS int) []nodeDelayResult {
