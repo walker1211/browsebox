@@ -655,7 +655,9 @@ func (a *App) Run(ctx context.Context, opts Options) error {
 		defer os.RemoveAll(started.session.RuntimeDir)
 	}
 
-	if err := a.printRunEndpoints(opts, started.controllerURL, started.session.RuntimeDir); err != nil {
+	printOpts := opts
+	printOpts.DefaultNode = started.session.Node
+	if err := a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir); err != nil {
 		return err
 	}
 
@@ -687,7 +689,9 @@ func (a *App) Start(ctx context.Context, opts Options) error {
 		}
 		return fmt.Errorf("save session state: %w", err)
 	}
-	return a.printRunEndpoints(opts, started.controllerURL, started.session.RuntimeDir)
+	printOpts := opts
+	printOpts.DefaultNode = started.session.Node
+	return a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir)
 }
 
 // Status reports the current browsebox session status.
@@ -754,7 +758,11 @@ type startedSession struct {
 }
 
 func startSession(processCtx, controlCtx context.Context, opts Options) (startedSession, error) {
-	if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
+	if opts.SelectFastest {
+		if err := validateNodeTuning(opts); err != nil {
+			return startedSession{}, err
+		}
+	} else if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
 		return startedSession{}, err
 	}
 	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
@@ -807,13 +815,17 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	if err := waitControllerReady(controlCtx, tempClient, opts.Group); err != nil {
 		return startedSession{}, fmt.Errorf("wait for temp controller: %w", err)
 	}
+	selectedNode, err := startupNode(controlCtx, tempClient, opts)
+	if err != nil {
+		return startedSession{}, err
+	}
 	selectCtx, cancelSelect := context.WithTimeout(controlCtx, selectNodeTimeout)
-	selectErr := tempClient.SelectNode(selectCtx, opts.Group, opts.DefaultNode)
+	selectErr := tempClient.SelectNode(selectCtx, opts.Group, selectedNode)
 	cancelSelect()
 	if selectErr != nil {
-		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", opts.DefaultNode, opts.Group, selectErr)
+		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", selectedNode, opts.Group, selectErr)
 	}
-	if err := checkHealthURLs(controlCtx, tempClient, opts.DefaultNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
+	if err := checkHealthURLs(controlCtx, tempClient, selectedNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
 		return startedSession{}, err
 	}
 
@@ -843,7 +855,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 			RuntimeDir:       runtimeDir,
 			ChromeDir:        profileDir,
 			Group:            opts.Group,
-			Node:             opts.DefaultNode,
+			Node:             selectedNode,
 			URL:              opts.TargetURL,
 			StartedAt:        time.Now().UTC().Format(time.RFC3339),
 			MihomoBinaryPath: opts.MihomoBinaryPath,
@@ -855,9 +867,32 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	}, nil
 }
 
+func startupNode(ctx context.Context, client *mihomo.Client, opts Options) (string, error) {
+	if !opts.SelectFastest {
+		return strings.TrimSpace(opts.DefaultNode), nil
+	}
+
+	group, err := lookupProxyGroup(ctx, client, opts.Group)
+	if err != nil {
+		return "", fmt.Errorf("lookup proxy group %q: %w", opts.Group, err)
+	}
+	targetURL := opts.TargetURL
+	if len(opts.HealthURLs) > 0 {
+		targetURL = opts.HealthURLs[0]
+	}
+	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	sortNodeDelayResults(results)
+	for _, result := range results {
+		if result.healthy {
+			return result.name, nil
+		}
+	}
+	return "", fmt.Errorf("select fastest node in group %q: no healthy nodes", opts.Group)
+}
+
 func requireNode(opts Options) error {
-	if strings.TrimSpace(opts.DefaultNode) == "" {
-		return errors.New("--node is required for run and start")
+	if strings.TrimSpace(opts.DefaultNode) == "" && !opts.SelectFastest {
+		return errors.New("--node is required for run and start unless --select-fastest is set")
 	}
 	return nil
 }
