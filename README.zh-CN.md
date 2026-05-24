@@ -150,6 +150,7 @@ cp configs/config.example.yaml configs/config.yaml
 - `--runtime-cache-dir <path>`：mihomo geodata 缓存目录，用于复用 `geosite` / `geoip` 等数据文件。
 - `--state-dir <path>`：持久会话状态目录，默认位于 `~/.browsebox`。
 - `--mihomo <path>`：mihomo 可执行文件路径。
+- `--interface-name <name>` / `mihomo.interface_name`：强制临时 mihomo 出站走指定网卡，例如 `en0`，用于避免被主 Clash Verge/TUN 干扰。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
 - `--chrome-profile-dir <path>`：Chrome profile 目录；留空时每次会话自动创建隔离临时 profile。
 - `browser.chrome_args`：额外 Chrome 启动参数配置；使用 block list 或 `[]`，每项可以带或不带开头的 `--`，会保留顺序并按参数名去重。`user-data-dir`、`proxy-server`、`remote-debugging-port` 由 browsebox 管理，配置中同名参数会被忽略。

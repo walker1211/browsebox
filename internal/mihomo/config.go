@@ -2,6 +2,7 @@ package mihomo
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -9,6 +10,7 @@ import (
 type RuntimeConfigOptions struct {
 	ProxyPort      int
 	ControllerPort int
+	InterfaceName  string
 	Group          string
 	Node           string
 }
@@ -88,6 +90,16 @@ func safeCommentValue(value string) string {
 	return b.String()
 }
 
+func safePlainScalar(value string) string {
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
+			continue
+		}
+		return strconv.Quote(value)
+	}
+	return value
+}
+
 func isolatedSetting(line string, opts RuntimeConfigOptions) (string, bool) {
 	switch settingKey(line) {
 	case "mixed-port":
@@ -98,6 +110,11 @@ func isolatedSetting(line string, opts RuntimeConfigOptions) (string, bool) {
 		return "bind-address: 127.0.0.1", true
 	case "external-controller":
 		return fmt.Sprintf("external-controller: 127.0.0.1:%d", opts.ControllerPort), true
+	case "interface-name":
+		if interfaceName := strings.TrimSpace(opts.InterfaceName); interfaceName != "" {
+			return "interface-name: " + safePlainScalar(interfaceName), true
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -124,6 +141,9 @@ func appendMissingSettings(out *[]string, seen map[string]bool, opts RuntimeConf
 	}
 	if !seen["external-controller"] {
 		*out = append(*out, fmt.Sprintf("external-controller: 127.0.0.1:%d", opts.ControllerPort))
+	}
+	if interfaceName := strings.TrimSpace(opts.InterfaceName); interfaceName != "" && !seen["interface-name"] {
+		*out = append(*out, "interface-name: "+safePlainScalar(interfaceName))
 	}
 }
 

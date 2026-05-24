@@ -839,6 +839,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	rewritten := mihomo.RewriteConfig(string(sourceConfig), mihomo.RuntimeConfigOptions{
 		ProxyPort:      opts.ProxyPort,
 		ControllerPort: opts.ControllerPort,
+		InterfaceName:  opts.MihomoInterfaceName,
 		Group:          opts.Group,
 		Node:           opts.DefaultNode,
 	})

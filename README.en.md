@@ -150,6 +150,7 @@ Common configuration options:
 - `--runtime-cache-dir <path>`: mihomo geodata cache directory for reusing files such as `geosite` and `geoip`.
 - `--state-dir <path>`: persistent session state directory, defaulting to `~/.browsebox`.
 - `--mihomo <path>`: mihomo executable path.
+- `--interface-name <name>` / `mihomo.interface_name`: force the temporary mihomo outbound dials through a network interface such as `en0`, useful when the main Clash Verge/TUN interferes.
 - `--chrome <path>`: Google Chrome executable path.
 - `--chrome-profile-dir <path>`: Chrome profile directory; if empty, each session gets an isolated temporary profile.
 - `browser.chrome_args`: extra Chrome launch arguments in config; use block-list syntax or `[]`. Entries may include or omit the leading `--`, and duplicate names are ignored after the first occurrence. `user-data-dir`, `proxy-server`, and `remote-debugging-port` are managed by browsebox and ignored if configured.
