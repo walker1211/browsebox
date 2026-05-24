@@ -16,6 +16,7 @@ func TestLoadConfigFileAppliesRuntimeSettings(t *testing.T) {
   controller_pipe: \\.\pipe\verge-mihomo
   config_path: ~/mihomo/config.yaml
   binary_path: ~/bin/mihomo
+  interface_name: en0
 browser:
   chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
   profile_dir: ~/.config/browsebox/chrome-profile
@@ -66,6 +67,7 @@ nodes:
 		"ControllerPipe":       opts.ControllerPipe == `\\.\pipe\verge-mihomo`,
 		"SourceConfigPath":     opts.SourceConfigPath == filepath.Join(home, "mihomo", "config.yaml"),
 		"MihomoBinaryPath":     opts.MihomoBinaryPath == filepath.Join(home, "bin", "mihomo"),
+		"MihomoInterfaceName":  opts.MihomoInterfaceName == "en0",
 		"ChromeBinaryPath":     opts.ChromeBinaryPath == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 		"ChromeProfileDir":     opts.ChromeProfileDir == filepath.Join(home, ".config", "browsebox", "chrome-profile"),
 		"ChromeArgs":           len(opts.ChromeArgs) == 4 && opts.ChromeArgs[0] == "no-first-run" && opts.ChromeArgs[3] == "disable-component-update",

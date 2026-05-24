@@ -2,6 +2,8 @@ mihomo:
   controller_socket: /tmp/verge/verge-mihomo.sock
   # config_path: ~/.config/mihomo/config.yaml
   # binary_path: verge-mihomo
+  # 强制临时 mihomo 出站走指定网卡，常用于避免被主 Clash Verge/TUN 干扰。
+  # interface_name: en0
 
 browser:
   # chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome

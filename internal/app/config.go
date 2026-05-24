@@ -118,6 +118,8 @@ func applyMihomoConfig(key, value string, opts *Options) error {
 		opts.SourceConfigPath = expandConfigPath(value)
 	case "binary_path", "binary-path", "binary":
 		opts.MihomoBinaryPath = expandConfigPath(value)
+	case "interface_name", "interface-name":
+		opts.MihomoInterfaceName = cleanConfigString(value)
 	}
 	return nil
 }

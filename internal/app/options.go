@@ -19,6 +19,7 @@ type Options struct {
 	RuntimeCacheDir      string
 	StateDir             string
 	MihomoBinaryPath     string
+	MihomoInterfaceName  string
 	ChromeBinaryPath     string
 	ChromeProfileDir     string
 	ChromeArgs           []string

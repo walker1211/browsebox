@@ -192,6 +192,7 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 	opts.SourceConfigPath = sourcePath
 	opts.RuntimeDir = runtimeBaseDir
 	opts.MihomoBinaryPath = "/bin/mihomo"
+	opts.MihomoInterfaceName = "en0"
 	opts.ChromeBinaryPath = "/bin/chrome"
 	opts.Group = "All"
 	opts.DefaultNode = "node-a"
@@ -211,6 +212,7 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 		"mixed-port: 17997",
 		"allow-lan: false",
 		"external-controller: 127.0.0.1:" + portText,
+		"interface-name: en0",
 		"tun:\n  enable: false",
 	} {
 		if !strings.Contains(rewritten, want) {
