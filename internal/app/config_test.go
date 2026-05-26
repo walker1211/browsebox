@@ -42,8 +42,14 @@ session:
   health_urls:
     - https://example.com/health
     - https://static.example.com/health
+  select_fastest: true
 nodes:
+  health_urls:
+    - https://chatgpt.com
+  select_fastest: true
   concurrency: 24
+  probe_rounds: 5
+  probe_interval_ms: 250
   delay_timeout_ms: 2500
   show_unhealthy: true
   highlight_current: false
@@ -82,7 +88,13 @@ nodes:
 		"Group":                opts.Group == "XFLTD",
 		"DefaultNode":          opts.DefaultNode == "node-a",
 		"TargetURL":            opts.TargetURL == "https://example.com/start",
+		"SessionHealthURLs":    len(opts.SessionHealthURLs) == 2 && opts.SessionHealthURLs[0] == "https://example.com/health" && opts.SessionHealthURLs[1] == "https://static.example.com/health",
+		"SessionSelectFastest": opts.SessionSelectFastest,
+		"NodesHealthURLs":      len(opts.NodesHealthURLs) == 1 && opts.NodesHealthURLs[0] == "https://chatgpt.com",
+		"NodesSelectFastest":   opts.NodesSelectFastest,
 		"NodesConcurrency":     opts.NodesConcurrency == 24,
+		"NodeProbeRounds":      opts.NodeProbeRounds == 5,
+		"NodeProbeIntervalMS":  opts.NodeProbeIntervalMS == 250,
 		"DelayTimeoutMS":       opts.DelayTimeoutMS == 2500,
 		"ShowUnhealthyNodes":   opts.ShowUnhealthyNodes,
 		"HighlightCurrentNode": !opts.HighlightCurrentNode,
@@ -145,6 +157,22 @@ func TestLoadConfigFileRejectsInvalidNodesTuning(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFileRejectsInvalidProbeInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("nodes:\n  probe_interval_ms: -1\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := DefaultOptions()
+
+	err := LoadConfigFile(path, &opts)
+	if err == nil {
+		t.Fatal("LoadConfigFile returned nil error, want invalid config error")
+	}
+	if !strings.Contains(err.Error(), "probe_interval_ms must be zero or a positive integer") {
+		t.Fatalf("error = %v, want probe interval validation", err)
+	}
+}
+
 func TestLoadConfigFileRejectsInvalidNodesBooleans(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -160,6 +188,16 @@ func TestLoadConfigFileRejectsInvalidNodesBooleans(t *testing.T) {
 			name:    "highlight current",
 			content: "nodes:\n  highlight_current: maybe\n",
 			want:    "highlight_current must be true or false",
+		},
+		{
+			name:    "nodes select fastest",
+			content: "nodes:\n  select_fastest: maybe\n",
+			want:    "select_fastest must be true or false",
+		},
+		{
+			name:    "session select fastest",
+			content: "session:\n  select_fastest: maybe\n",
+			want:    "select_fastest must be true or false",
 		},
 	}
 

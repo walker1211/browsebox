@@ -2197,6 +2197,111 @@ func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
 	}
 }
 
+func TestNodesAveragesMultipleHealthURLsAcrossProbeRounds(t *testing.T) {
+	requests := make(chan struct {
+		path string
+		body string
+	}, 1)
+	counts := map[string]int{}
+	var countsMu sync.Mutex
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["single-fast-node","balanced-node","dead-node"]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/delay"):
+			key := r.URL.Path + "|" + r.URL.Query().Get("url")
+			countsMu.Lock()
+			counts[key]++
+			countsMu.Unlock()
+			switch {
+			case r.URL.Path == "/proxies/single-fast-node/delay" && r.URL.Query().Get("url") == "https://x.example":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"delay":10}`))
+			case r.URL.Path == "/proxies/single-fast-node/delay" && r.URL.Query().Get("url") == "https://static.example":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"delay":100}`))
+			case r.URL.Path == "/proxies/balanced-node/delay":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"delay":40}`))
+			case r.URL.Path == "/proxies/dead-node/delay":
+				http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+			default:
+				t.Fatalf("unexpected delay request: %s", r.URL.String())
+			}
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read PUT body: %v", err)
+			}
+			requests <- struct {
+				path string
+				body string
+			}{r.URL.Path, string(body)}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://x.example", "https://static.example"}
+	opts.NodeProbeRounds = 2
+	opts.NodesConcurrency = 3
+	opts.ShowUnhealthyNodes = true
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got.path != "/proxies/All" {
+			t.Fatalf("PUT path = %q, want /proxies/All", got.path)
+		}
+		if got.body != `{"name":"balanced-node"}`+"\n" {
+			t.Fatalf("PUT body = %q, want balanced-node JSON payload", got.body)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select the lowest average node")
+	}
+
+	countsMu.Lock()
+	defer countsMu.Unlock()
+	for _, node := range []string{"single-fast-node", "balanced-node"} {
+		for _, healthURL := range opts.HealthURLs {
+			key := "/proxies/" + node + "/delay|" + healthURL
+			if counts[key] != opts.NodeProbeRounds {
+				t.Fatalf("probe count for %s = %d, want %d", key, counts[key], opts.NodeProbeRounds)
+			}
+		}
+	}
+
+	out := stdout.String()
+	balancedIndex := strings.Index(out, "balanced-node")
+	singleFastIndex := strings.Index(out, "single-fast-node")
+	deadIndex := strings.Index(out, "dead-node")
+	if balancedIndex == -1 || singleFastIndex == -1 || deadIndex == -1 {
+		t.Fatalf("nodes output missing expected rows:\n%s", out)
+	}
+	if !(balancedIndex < singleFastIndex && singleFastIndex < deadIndex) {
+		t.Fatalf("nodes output was not sorted by average delay with unhealthy last:\n%s", out)
+	}
+	if !strings.Contains(out, "balanced-node") || !strings.Contains(out, "40ms") || !strings.Contains(out, "single-fast-node") || !strings.Contains(out, "55ms") {
+		t.Fatalf("nodes output missing averaged delays:\n%s", out)
+	}
+}
+
 func TestNodesAutoResolvesCurrentProxyGroupWhenGroupEmpty(t *testing.T) {
 	requests := make(chan string, 1)
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

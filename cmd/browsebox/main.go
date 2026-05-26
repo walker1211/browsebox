@@ -50,6 +50,8 @@ Flags:
   --target-url url          Legacy alias for --url
   --health-url url          Health check URL; repeat to set multiple URLs
   --nodes-concurrency n     Concurrent node delay checks
+  --probe-rounds n          Delay check rounds per health URL when selecting/listing nodes
+  --probe-interval-ms ms    Delay between probe rounds in milliseconds
   --delay-timeout-ms ms     Mihomo delay check timeout in milliseconds
   --show-unhealthy bool    Show unhealthy nodes in nodes output
   --highlight-current bool Highlight the current node in nodes output
@@ -112,6 +114,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+	applyCommandDefaults(command, &opts, commandLineOverrides(flags, commandFlags))
 
 	application := app.New(stdout, stderr)
 	if err := dispatch(context.Background(), application, command, opts); err != nil {
@@ -162,6 +165,49 @@ func isKnownCommand(command string) bool {
 	}
 }
 
+type commandOverrides struct {
+	healthURLs    bool
+	selectFastest bool
+}
+
+func commandLineOverrides(flagSets ...*flag.FlagSet) commandOverrides {
+	overrides := commandOverrides{}
+	for _, flags := range flagSets {
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "health-url":
+				overrides.healthURLs = true
+			case "select-fastest":
+				overrides.selectFastest = true
+			}
+		})
+	}
+	return overrides
+}
+
+func applyCommandDefaults(command string, opts *app.Options, overrides commandOverrides) {
+	switch command {
+	case "nodes":
+		if !overrides.healthURLs && opts.NodesHealthURLs != nil {
+			opts.HealthURLs = cloneStrings(opts.NodesHealthURLs)
+		}
+		if !overrides.selectFastest {
+			opts.SelectFastest = opts.NodesSelectFastest
+		}
+	case "run", "start":
+		if !overrides.healthURLs && opts.SessionHealthURLs != nil {
+			opts.HealthURLs = cloneStrings(opts.SessionHealthURLs)
+		}
+		if !overrides.selectFastest {
+			opts.SelectFastest = opts.SessionSelectFastest
+		}
+	}
+}
+
+func cloneStrings(values []string) []string {
+	return append([]string(nil), values...)
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, usageText)
 }
@@ -193,6 +239,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.TargetURL, "target-url", opts.TargetURL, "legacy alias for --url")
 	flags.Var(&healthURLFlag{values: &opts.HealthURLs}, "health-url", "health check URL; repeat to set multiple URLs")
 	flags.IntVar(&opts.NodesConcurrency, "nodes-concurrency", opts.NodesConcurrency, "concurrent node delay checks")
+	flags.IntVar(&opts.NodeProbeRounds, "probe-rounds", opts.NodeProbeRounds, "delay check rounds per health URL when selecting/listing nodes")
+	flags.IntVar(&opts.NodeProbeIntervalMS, "probe-interval-ms", opts.NodeProbeIntervalMS, "delay between probe rounds in milliseconds")
 	flags.IntVar(&opts.DelayTimeoutMS, "delay-timeout-ms", opts.DelayTimeoutMS, "mihomo delay check timeout in milliseconds")
 	flags.BoolVar(&opts.ShowUnhealthyNodes, "show-unhealthy", opts.ShowUnhealthyNodes, "show unhealthy nodes in nodes output")
 	flags.BoolVar(&opts.HighlightCurrentNode, "highlight-current", opts.HighlightCurrentNode, "highlight the current node in nodes output")

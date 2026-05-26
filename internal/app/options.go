@@ -32,9 +32,15 @@ type Options struct {
 	DevToolsPort         int
 	TargetURL            string
 	HealthURLs           []string
+	SessionHealthURLs    []string
+	NodesHealthURLs      []string
 	NodesConcurrency     int
+	NodeProbeRounds      int
+	NodeProbeIntervalMS  int
 	DelayTimeoutMS       int
 	SelectFastest        bool
+	SessionSelectFastest bool
+	NodesSelectFastest   bool
 	ShowUnhealthyNodes   bool
 	HighlightCurrentNode bool
 }
@@ -58,9 +64,19 @@ func DefaultOptions() Options {
 		DevToolsPort:         9223,
 		TargetURL:            "https://x.com/OpenAI",
 		NodesConcurrency:     16,
+		NodeProbeRounds:      1,
+		NodeProbeIntervalMS:  0,
 		DelayTimeoutMS:       5000,
 		HighlightCurrentNode: true,
 		HealthURLs: []string{
+			"https://x.com",
+			"https://abs.twimg.com",
+		},
+		SessionHealthURLs: []string{
+			"https://x.com",
+			"https://abs.twimg.com",
+		},
+		NodesHealthURLs: []string{
 			"https://x.com",
 			"https://abs.twimg.com",
 		},

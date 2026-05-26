@@ -1,11 +1,15 @@
 mihomo:
+  # 主 Clash Verge/mihomo 的 Unix socket；browsebox 用它读取代理组和节点信息。
   controller_socket: /tmp/verge/verge-mihomo.sock
+  # 源 mihomo 配置文件；不填时使用默认路径，browsebox 会复制并改写为临时运行配置。
   # config_path: ~/.config/mihomo/config.yaml
+  # mihomo/verge-mihomo 可执行文件路径；不填时按系统默认查找。
   # binary_path: verge-mihomo
   # 强制临时 mihomo 出站走指定网卡，常用于避免被主 Clash Verge/TUN 干扰。
   # interface_name: en0
 
 browser:
+  # Chrome 可执行文件路径；不填时按系统默认路径查找。
   # chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
   # 留空时使用每次会话自动创建的隔离临时 profile；需要固定登录态时再设置。
   profile_dir: ""
@@ -19,27 +23,52 @@ browser:
     - disable-component-update
 
 runtime:
+  # 临时运行目录；run/start 会在这里创建 mihomo 配置、缓存引用和临时 Chrome profile。
   # dir: /tmp/browsebox
+  # mihomo geodata 缓存目录，用于复用 geosite/geoip 等数据，避免每次临时实例重复下载。
   # cache_dir: ~/.cache/browsebox/mihomo
+  # start/status/stop 使用的会话状态目录。
   state_dir: ~/.browsebox
+  # run 退出后是否保留临时运行文件；false 会自动清理。
   keep: false
 
 ports:
+  # 临时 mihomo 暴露给 Chrome 或上游项目使用的本地代理端口。
   proxy: 17997
+  # browsebox 控制临时 mihomo 的 controller API 端口。
   controller: 17998
+  # Chrome DevTools/CDP 端口，给 browser-mcp 或脚本连接。
   devtools: 9223
 
 session:
-  # 留空时自动匹配当前 Clash/mihomo 选择的代理组；也可以填固定组名，例如 XFLTD。
+  # run/start 使用的配置；group 留空时自动匹配当前 Clash/mihomo 选择的代理组。
   group: ""
+  # node 留空且 select_fastest 为 true 时，会在临时 mihomo 控制器内自动选择健康均值最低的节点。
   node: ""
+  # run/start 默认打开的页面。
   url: https://x.com/OpenAI
+  # run/start 选节点和启动前健康检查使用的 URL；X 页面建议同时检查主站和静态资源域名。
   health_urls:
     - https://x.com
     - https://abs.twimg.com
+  # 只影响 run/start 的临时控制器，不会修改主 Clash/mihomo 选择器。
+  select_fastest: true
 
 nodes:
-  concurrency: 16
+  # ./browsebox nodes 默认探测的 URL；需要查 ChatGPT 节点时可以保持这个值。
+  health_urls:
+    - https://chatgpt.com
+  # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 的当前组切到健康均值最低的节点。
+  select_fastest: true
+  # 并发探测节点数，过高可能让控制器或出口节点不稳定。
+  concurrency: 32
+  # 每个 health_url 的探测轮数，最终按所有 URL × 所有轮次的平均延迟排序。
+  probe_rounds: 3
+  # 多轮探测之间的间隔，单位毫秒；0 表示不额外等待。
+  probe_interval_ms: 300
+  # 单次 mihomo delay 探测超时，单位毫秒。
   delay_timeout_ms: 5000
+  # 是否展示 unhealthy 节点；false 时只展示健康节点。
   show_unhealthy: false
+  # 是否用颜色标记当前节点；当前节点被过滤时不会显示。
   highlight_current: true

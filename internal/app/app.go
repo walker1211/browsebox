@@ -256,12 +256,8 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	targetURL := opts.TargetURL
-	if len(opts.HealthURLs) > 0 {
-		targetURL = opts.HealthURLs[0]
-	}
-
-	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	targetURLs := nodeProbeURLs(opts)
+	results := collectNodeDelays(ctx, client, group.All, targetURLs, opts.NodeProbeRounds, opts.NodeProbeIntervalMS, opts.NodesConcurrency, opts.DelayTimeoutMS)
 	sortNodeDelayResults(results)
 	displayResults := filterNodeDelayResults(results, opts.ShowUnhealthyNodes)
 	outputOptions := nodeDelayOutputOptions{
@@ -307,6 +303,12 @@ type nodeDelayResult struct {
 func validateNodeTuning(opts Options) error {
 	if opts.NodesConcurrency <= 0 {
 		return errors.New("--nodes-concurrency must be a positive integer")
+	}
+	if opts.NodeProbeRounds <= 0 {
+		return errors.New("--probe-rounds must be a positive integer")
+	}
+	if opts.NodeProbeIntervalMS < 0 {
+		return errors.New("--probe-interval-ms must be zero or a positive integer")
 	}
 	return validateDelayTimeout(opts.DelayTimeoutMS)
 }
@@ -487,7 +489,21 @@ func singleProxyGroupName(names map[string]struct{}) (string, bool, error) {
 	return matches[0], true, nil
 }
 
-func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURL string, concurrency, timeoutMS int) []nodeDelayResult {
+func nodeProbeURLs(opts Options) []string {
+	var urls []string
+	for _, healthURL := range opts.HealthURLs {
+		trimmedURL := strings.TrimSpace(healthURL)
+		if trimmedURL != "" {
+			urls = append(urls, trimmedURL)
+		}
+	}
+	if len(urls) == 0 {
+		urls = append(urls, strings.TrimSpace(opts.TargetURL))
+	}
+	return urls
+}
+
+func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURLs []string, probeRounds, probeIntervalMS, concurrency, timeoutMS int) []nodeDelayResult {
 	results := make([]nodeDelayResult, len(nodes))
 	if len(nodes) == 0 {
 		return results
@@ -502,7 +518,7 @@ func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []strin
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				results[index] = checkNodeDelay(ctx, client, index, nodes[index], targetURL, timeoutMS)
+				results[index] = checkNodeDelay(ctx, client, index, nodes[index], targetURLs, probeRounds, probeIntervalMS, timeoutMS)
 			}
 		}()
 	}
@@ -516,15 +532,35 @@ func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []strin
 	return results
 }
 
-func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node, targetURL string, timeoutMS int) nodeDelayResult {
+func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node string, targetURLs []string, probeRounds, probeIntervalMS, timeoutMS int) nodeDelayResult {
 	result := nodeDelayResult{index: index, name: node}
-	delayCtx, cancelDelay := context.WithTimeout(ctx, nodeDelayContextTimeout(timeoutMS))
-	delay, err := client.Delay(delayCtx, node, targetURL, timeoutMS)
-	cancelDelay()
-	if err != nil || delay.Error != "" {
+	var totalDelay int
+	var probeCount int
+	for round := range probeRounds {
+		if round > 0 && probeIntervalMS > 0 {
+			interval := time.NewTimer(time.Duration(probeIntervalMS) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				interval.Stop()
+				return result
+			case <-interval.C:
+			}
+		}
+		for _, targetURL := range targetURLs {
+			delayCtx, cancelDelay := context.WithTimeout(ctx, nodeDelayContextTimeout(timeoutMS))
+			delay, err := client.Delay(delayCtx, node, targetURL, timeoutMS)
+			cancelDelay()
+			if err != nil || delay.Error != "" {
+				return result
+			}
+			totalDelay += delay.Delay
+			probeCount++
+		}
+	}
+	if probeCount == 0 {
 		return result
 	}
-	result.delay = delay.Delay
+	result.delay = totalDelay / probeCount
 	result.healthy = true
 	return result
 }
@@ -1055,11 +1091,8 @@ func startupNode(ctx context.Context, client *mihomo.Client, opts Options) (stri
 	if err != nil {
 		return "", fmt.Errorf("lookup proxy group %q: %w", opts.Group, err)
 	}
-	targetURL := opts.TargetURL
-	if len(opts.HealthURLs) > 0 {
-		targetURL = opts.HealthURLs[0]
-	}
-	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	targetURLs := nodeProbeURLs(opts)
+	results := collectNodeDelays(ctx, client, group.All, targetURLs, opts.NodeProbeRounds, opts.NodeProbeIntervalMS, opts.NodesConcurrency, opts.DelayTimeoutMS)
 	sortNodeDelayResults(results)
 	for _, result := range results {
 		if result.healthy {
