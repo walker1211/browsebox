@@ -411,7 +411,7 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 	for _, group := range groups {
 		byName[group.Name] = group
 	}
-	if globalGroup, ok := byName["GLOBAL"]; ok {
+	if globalGroup, ok := byName["GLOBAL"]; ok && selectsProxyGroup(globalGroup, byName) {
 		if groupName, ok, err := selectedLeafProxyGroupName(globalGroup, byName); ok || err != nil {
 			return groupName, err
 		}
@@ -430,6 +430,9 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		if _, ok := byName[strings.TrimSpace(selectedGroup.Now)]; ok {
 			continue
 		}
+		if !isAutoProxyGroupCandidate(selectedGroup.Name) {
+			continue
+		}
 		selectedGroups[selectedGroup.Name] = struct{}{}
 	}
 	if name, ok, err := singleProxyGroupName(selectedGroups); ok || err != nil {
@@ -445,6 +448,9 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		if _, ok := byName[selectedName]; ok {
 			continue
 		}
+		if !isAutoProxyGroupCandidate(group.Name) {
+			continue
+		}
 		currentGroups[group.Name] = struct{}{}
 	}
 	if name, ok, err := singleProxyGroupName(currentGroups); ok || err != nil {
@@ -452,6 +458,16 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 	}
 
 	return "", errors.New("no current proxy group found; set session.group or pass --group")
+}
+
+func selectsProxyGroup(group mihomo.ProxyGroupInfo, byName map[string]mihomo.ProxyGroupInfo) bool {
+	selectedName := strings.TrimSpace(group.Now)
+	selectedGroup, ok := byName[selectedName]
+	return ok && len(selectedGroup.All) > 0
+}
+
+func isAutoProxyGroupCandidate(name string) bool {
+	return name != "GLOBAL"
 }
 
 func selectedLeafProxyGroupName(group mihomo.ProxyGroupInfo, byName map[string]mihomo.ProxyGroupInfo) (string, bool, error) {
