@@ -41,7 +41,7 @@ Flags:
   --chrome-profile-dir path Chrome profile directory
   --headless                Launch Chrome in headless mode
   --keep                    Keep runtime files after exit
-  --group name              Proxy group name
+  --group name              Proxy group name; empty auto-resolves current group
   --node name               Default proxy node name
   --proxy-port port         Local proxy port
   --controller-port port    Local controller port

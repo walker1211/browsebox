@@ -251,24 +251,9 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	groupName := opts.Group
-	group, err := lookupProxyGroup(ctx, client, groupName)
+	groupName, group, err := resolveEffectiveProxyGroup(ctx, client, opts.Group)
 	if err != nil {
-		originalLookupErr := err
-		resolvedGroupName, resolveErr := resolveProxyGroupName(ctx, client, opts.Group)
-		if resolveErr == nil && resolvedGroupName != opts.Group {
-			groupName = resolvedGroupName
-			group, err = lookupProxyGroup(ctx, client, groupName)
-		} else {
-			var ambiguousErr *ambiguousProxyGroupError
-			if errors.As(resolveErr, &ambiguousErr) {
-				return ambiguousErr
-			}
-			err = originalLookupErr
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("lookup proxy group %q: %w", groupName, err)
+		return err
 	}
 
 	targetURL := opts.TargetURL
@@ -333,6 +318,39 @@ func validateDelayTimeout(timeoutMS int) error {
 	return nil
 }
 
+func resolveEffectiveProxyGroup(ctx context.Context, client *mihomo.Client, name string) (string, mihomo.ProxyGroupInfo, error) {
+	groupName := strings.TrimSpace(name)
+	if groupName == "" {
+		resolvedGroupName, err := autoProxyGroupName(ctx, client)
+		if err != nil {
+			return "", mihomo.ProxyGroupInfo{}, fmt.Errorf("auto resolve proxy group: %w", err)
+		}
+		groupName = resolvedGroupName
+	}
+
+	group, err := lookupProxyGroup(ctx, client, groupName)
+	if err == nil {
+		return groupName, group, nil
+	}
+
+	originalLookupErr := err
+	resolvedGroupName, resolveErr := resolveProxyGroupName(ctx, client, groupName)
+	if resolveErr == nil && resolvedGroupName != groupName {
+		groupName = resolvedGroupName
+		group, err = lookupProxyGroup(ctx, client, groupName)
+		if err == nil {
+			return groupName, group, nil
+		}
+	} else {
+		var ambiguousErr *ambiguousProxyGroupError
+		if errors.As(resolveErr, &ambiguousErr) {
+			return "", mihomo.ProxyGroupInfo{}, ambiguousErr
+		}
+		err = originalLookupErr
+	}
+	return "", mihomo.ProxyGroupInfo{}, fmt.Errorf("lookup proxy group %q: %w", groupName, err)
+}
+
 func lookupProxyGroup(ctx context.Context, client *mihomo.Client, name string) (mihomo.ProxyGroupInfo, error) {
 	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
 	group, err := client.ProxyGroup(groupCtx, name)
@@ -377,6 +395,96 @@ func resolveProxyGroupName(ctx context.Context, client *mihomo.Client, name stri
 		return "", &ambiguousProxyGroupError{name: name, matches: matches}
 	}
 	return name, nil
+}
+
+func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, error) {
+	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
+	groups, err := client.ProxyGroups(groupCtx)
+	cancelGroup()
+	if err != nil {
+		return "", fmt.Errorf("list proxy groups: %w", err)
+	}
+
+	byName := make(map[string]mihomo.ProxyGroupInfo, len(groups))
+	for _, group := range groups {
+		byName[group.Name] = group
+	}
+	if globalGroup, ok := byName["GLOBAL"]; ok {
+		if groupName, ok, err := selectedLeafProxyGroupName(globalGroup, byName); ok || err != nil {
+			return groupName, err
+		}
+	}
+
+	selectedGroups := map[string]struct{}{}
+	for _, group := range groups {
+		selectedName := strings.TrimSpace(group.Now)
+		if selectedName == "" || selectedName == group.Name {
+			continue
+		}
+		selectedGroup, ok := byName[selectedName]
+		if !ok || len(selectedGroup.All) == 0 {
+			continue
+		}
+		if _, ok := byName[strings.TrimSpace(selectedGroup.Now)]; ok {
+			continue
+		}
+		selectedGroups[selectedGroup.Name] = struct{}{}
+	}
+	if name, ok, err := singleProxyGroupName(selectedGroups); ok || err != nil {
+		return name, err
+	}
+
+	currentGroups := map[string]struct{}{}
+	for _, group := range groups {
+		selectedName := strings.TrimSpace(group.Now)
+		if selectedName == "" {
+			continue
+		}
+		if _, ok := byName[selectedName]; ok {
+			continue
+		}
+		currentGroups[group.Name] = struct{}{}
+	}
+	if name, ok, err := singleProxyGroupName(currentGroups); ok || err != nil {
+		return name, err
+	}
+
+	return "", errors.New("no current proxy group found; set session.group or pass --group")
+}
+
+func selectedLeafProxyGroupName(group mihomo.ProxyGroupInfo, byName map[string]mihomo.ProxyGroupInfo) (string, bool, error) {
+	seen := map[string]struct{}{group.Name: {}}
+	current := group
+	for {
+		selectedName := strings.TrimSpace(current.Now)
+		if selectedName == "" {
+			return "", false, nil
+		}
+		selectedGroup, ok := byName[selectedName]
+		if !ok || len(selectedGroup.All) == 0 {
+			return current.Name, true, nil
+		}
+		if _, ok := seen[selectedGroup.Name]; ok {
+			return "", false, fmt.Errorf("proxy group selection cycle at %q", selectedGroup.Name)
+		}
+		seen[selectedGroup.Name] = struct{}{}
+		current = selectedGroup
+	}
+}
+
+func singleProxyGroupName(names map[string]struct{}) (string, bool, error) {
+	if len(names) == 0 {
+		return "", false, nil
+	}
+	matches := make([]string, 0, len(names))
+	for name := range names {
+		matches = append(matches, name)
+	}
+	sort.Strings(matches)
+	if len(matches) > 1 {
+		return "", true, &ambiguousProxyGroupError{name: "auto", matches: matches}
+	}
+	return matches[0], true, nil
 }
 
 func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURL string, concurrency, timeoutMS int) []nodeDelayResult {
@@ -682,6 +790,23 @@ func isVariationSelector(r rune) bool {
 	return r >= 0xFE00 && r <= 0xFE0F
 }
 
+func resolveStartupProxyGroup(ctx context.Context, opts *Options) error {
+	if strings.TrimSpace(opts.Group) != "" {
+		opts.Group = strings.TrimSpace(opts.Group)
+		return nil
+	}
+	client, err := controllerClient(*opts)
+	if err != nil {
+		return err
+	}
+	groupName, _, err := resolveEffectiveProxyGroup(ctx, client, opts.Group)
+	if err != nil {
+		return err
+	}
+	opts.Group = groupName
+	return nil
+}
+
 // Run launches a temporary isolated browser session.
 func (a *App) Run(ctx context.Context, opts Options) error {
 	if err := requireNode(opts); err != nil {
@@ -704,6 +829,7 @@ func (a *App) Run(ctx context.Context, opts Options) error {
 	}
 
 	printOpts := opts
+	printOpts.Group = started.session.Group
 	printOpts.DefaultNode = started.session.Node
 	if err := a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir); err != nil {
 		return err
@@ -738,6 +864,7 @@ func (a *App) Start(ctx context.Context, opts Options) error {
 		return fmt.Errorf("save session state: %w", err)
 	}
 	printOpts := opts
+	printOpts.Group = started.session.Group
 	printOpts.DefaultNode = started.session.Node
 	return a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir)
 }
@@ -815,6 +942,9 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	}
 	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
 		return startedSession{}, fmt.Errorf("check local ports: %w", err)
+	}
+	if err := resolveStartupProxyGroup(controlCtx, &opts); err != nil {
+		return startedSession{}, err
 	}
 
 	sourceConfig, err := readFile(opts.SourceConfigPath)

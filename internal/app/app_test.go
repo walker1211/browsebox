@@ -25,11 +25,11 @@ import (
 	"github.com/walker1211/browsebox/internal/state"
 )
 
-func TestDefaultOptionsUseGenericGroupAndNoPrivateNode(t *testing.T) {
+func TestDefaultOptionsUseAutoGroupAndNoPrivateNode(t *testing.T) {
 	opts := DefaultOptions()
 
-	if opts.Group != "All" {
-		t.Fatalf("default group = %q, want All", opts.Group)
+	if opts.Group != "" {
+		t.Fatalf("default group = %q, want empty for auto resolution", opts.Group)
 	}
 	if opts.DefaultNode != "" {
 		t.Fatalf("default node = %q, want empty", opts.DefaultNode)
@@ -691,6 +691,114 @@ func TestStartSelectsFastestHealthyNodeWhenNodeOmitted(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "fast-node") {
 		t.Fatalf("stdout missing selected node:\n%s", stdout.String())
+	}
+}
+
+func TestStartAutoResolvesCurrentProxyGroupWhenGroupEmpty(t *testing.T) {
+	disableLocalPortCheck(t)
+	requests := make(chan string, 1)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"All":{"name":"All","type":"Selector","all":["DIRECT","XFLTD"],"now":"XFLTD"},"XFLTD":{"name":"XFLTD","type":"Selector","all":["slow-node","fast-node"],"now":"slow-node"}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/XFLTD":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"XFLTD","type":"Selector","all":["slow-node","fast-node"],"now":"slow-node"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/slow-node/delay":
+			if got := r.URL.Query().Get("url"); got != "https://x.com" {
+				t.Fatalf("delay url query = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":90}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			if got := r.URL.Query().Get("url"); got != "https://x.com" {
+				t.Fatalf("delay url query = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/XFLTD":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read PUT body: %v", err)
+			}
+			requests <- string(body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(controller.Close)
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(controller.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split controller URL: %v", err)
+	}
+	controllerPort, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse controller port: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.yaml")
+	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	stateDir := filepath.Join(tempDir, "state")
+
+	oldStartProcess := startMihomoProcess
+	oldStartChrome := startChrome
+	t.Cleanup(func() {
+		startMihomoProcess = oldStartProcess
+		startChrome = oldStartChrome
+	})
+	startMihomoProcess = func(ctx context.Context, binaryPath, dir, configPath string) (process, error) {
+		return &recordingProcess{pid: 1111}, nil
+	}
+	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		return &recordingProcess{pid: 2222}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerURL = controller.URL
+	opts.SourceConfigPath = sourcePath
+	opts.StateDir = stateDir
+	opts.MihomoBinaryPath = "/bin/mihomo"
+	opts.ChromeBinaryPath = "/bin/chrome"
+	opts.Group = ""
+	opts.DefaultNode = ""
+	opts.SelectFastest = true
+	opts.ControllerPort = controllerPort
+	opts.TargetURL = "https://x.com"
+	opts.HealthURLs = nil
+
+	if err := application.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got != `{"name":"fast-node"}`+"\n" {
+			t.Fatalf("selected node payload = %q, want fast-node", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Start did not select the fastest healthy node in the auto-resolved group")
+	}
+
+	session, err := state.Load(stateDir)
+	if err != nil {
+		t.Fatalf("load saved state: %v", err)
+	}
+	if session.Group != "XFLTD" || session.Node != "fast-node" {
+		t.Fatalf("saved selection metadata = %#v", session)
+	}
+	if !strings.Contains(stdout.String(), "XFLTD") || !strings.Contains(stdout.String(), "fast-node") {
+		t.Fatalf("stdout missing selected group or node:\n%s", stdout.String())
 	}
 }
 
@@ -2086,6 +2194,67 @@ func TestNodesSelectFastestPutsFastestHealthyNode(t *testing.T) {
 	}
 	if !strings.Contains(out, "selected fast-node (10ms) for group All") {
 		t.Fatalf("nodes output missing selection success line:\n%s", out)
+	}
+}
+
+func TestNodesAutoResolvesCurrentProxyGroupWhenGroupEmpty(t *testing.T) {
+	requests := make(chan string, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"GLOBAL":{"name":"GLOBAL","type":"Selector","all":["All"],"now":"All"},"All":{"name":"All","type":"Selector","all":["DIRECT","XFLTD","Other"],"now":"XFLTD"},"XFLTD":{"name":"XFLTD","type":"Selector","all":["slow-node","fast-node"],"now":"slow-node"},"Other":{"name":"Other","type":"Selector","all":["other-node"],"now":"other-node"},"OpenAI":{"name":"OpenAI","type":"Selector","all":["OpenAIAuto"],"now":"OpenAIAuto"},"OpenAIAuto":{"name":"OpenAIAuto","type":"Selector","all":["oa-node"],"now":"oa-node"}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/XFLTD":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"XFLTD","type":"Selector","all":["slow-node","fast-node"],"now":"slow-node"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/slow-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":80}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/XFLTD":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read PUT body: %v", err)
+			}
+			requests <- string(body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = ""
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got != `{"name":"fast-node"}`+"\n" {
+			t.Fatalf("PUT body = %q, want fast-node JSON payload", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select the fastest node in the auto-resolved group")
+	}
+	if out := stdout.String(); !strings.Contains(out, "selected fast-node (10ms) for group XFLTD") {
+		t.Fatalf("nodes output missing auto-resolved selection line:\n%s", out)
 	}
 }
 
