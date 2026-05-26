@@ -74,7 +74,7 @@ List proxy groups:
 ./browsebox groups
 ```
 
-Check node delays concurrently; healthy nodes are sorted by ascending delay and failed nodes are listed last:
+Check node delays concurrently; unhealthy nodes are hidden by default and healthy nodes are sorted by ascending delay. When `--show-unhealthy=true` is used, unhealthy nodes are shown after healthy nodes:
 
 ```bash
 ./browsebox nodes --group "<group>"
@@ -150,6 +150,7 @@ Common configuration options:
 - `--runtime-cache-dir <path>`: mihomo geodata cache directory for reusing files such as `geosite` and `geoip`.
 - `--state-dir <path>`: persistent session state directory, defaulting to `~/.browsebox`.
 - `--mihomo <path>`: mihomo executable path.
+- `--interface-name <name>` / `mihomo.interface_name`: force the temporary mihomo outbound dials through a network interface such as `en0`, useful when the main Clash Verge/TUN interferes.
 - `--chrome <path>`: Google Chrome executable path.
 - `--chrome-profile-dir <path>`: Chrome profile directory; if empty, each session gets an isolated temporary profile.
 - `browser.chrome_args`: extra Chrome launch arguments in config; use block-list syntax or `[]`. Entries may include or omit the leading `--`, and duplicate names are ignored after the first occurrence. `user-data-dir`, `proxy-server`, and `remote-debugging-port` are managed by browsebox and ignored if configured.
@@ -157,6 +158,8 @@ Common configuration options:
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
 - `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
+- `--show-unhealthy=true|false`: whether `nodes` shows unhealthy nodes, defaulting to `false` so only available nodes are shown.
+- `--highlight-current=true|false`: whether `nodes` color-highlights the current node, defaulting to `true`; hidden current nodes are not shown separately.
 - `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch `<group>` in the main controller to the lowest-delay healthy node.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 

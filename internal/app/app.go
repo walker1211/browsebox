@@ -288,8 +288,15 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 
 	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
 	sortNodeDelayResults(results)
+	displayResults := filterNodeDelayResults(results, opts.ShowUnhealthyNodes)
+	outputOptions := nodeDelayOutputOptions{
+		total:            len(results),
+		healthy:          countHealthyNodeDelayResults(results),
+		currentNode:      group.Now,
+		highlightCurrent: opts.HighlightCurrentNode,
+	}
 
-	if err := writeNodeDelayResults(a.stdout, results); err != nil {
+	if err := writeNodeDelayResults(a.stdout, displayResults, outputOptions); err != nil {
 		return err
 	}
 	if !opts.SelectFastest {
@@ -522,34 +529,73 @@ func sortNodeDelayResults(results []nodeDelayResult) {
 	})
 }
 
-type nodeDelayRow struct {
-	node   string
-	status string
-	delay  string
+func filterNodeDelayResults(results []nodeDelayResult, showUnhealthy bool) []nodeDelayResult {
+	if showUnhealthy {
+		return results
+	}
+	filtered := make([]nodeDelayResult, 0, len(results))
+	for _, result := range results {
+		if result.healthy {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }
 
-func writeNodeDelayResults(w io.Writer, results []nodeDelayResult) error {
+func countHealthyNodeDelayResults(results []nodeDelayResult) int {
+	healthy := 0
+	for _, result := range results {
+		if result.healthy {
+			healthy++
+		}
+	}
+	return healthy
+}
+
+const (
+	currentNodeRowColor = "\x1b[1;36m"
+	ansiReset           = "\x1b[0m"
+)
+
+type nodeDelayOutputOptions struct {
+	total            int
+	healthy          int
+	currentNode      string
+	highlightCurrent bool
+}
+
+type nodeDelayRow struct {
+	node      string
+	status    string
+	delay     string
+	highlight bool
+}
+
+func writeNodeDelayResults(w io.Writer, results []nodeDelayResult, options nodeDelayOutputOptions) error {
+	if _, err := fmt.Fprintf(w, "nodes: total %d, ok %d, shown %d\n", options.total, options.healthy, len(results)); err != nil {
+		return err
+	}
 	rows := make([]nodeDelayRow, 0, len(results)+1)
 	rows = append(rows, nodeDelayRow{node: "NODE", status: "STATUS", delay: "DELAY"})
 	for _, result := range results {
-		rows = append(rows, nodeDelayResultRow(result))
+		rows = append(rows, nodeDelayResultRow(result, options.currentNode, options.highlightCurrent))
 	}
 	return writeFixedWidthRows(w, rows)
 }
 
-func nodeDelayResultRow(result nodeDelayResult) nodeDelayRow {
+func nodeDelayResultRow(result nodeDelayResult, currentNode string, highlightCurrent bool) nodeDelayRow {
+	row := nodeDelayRow{
+		node:      sanitizeDisplayName(result.name),
+		highlight: highlightCurrent && currentNode != "" && result.name == currentNode,
+	}
 	if !result.healthy {
-		return nodeDelayRow{
-			node:   sanitizeDisplayName(result.name),
-			status: "unhealthy",
-			delay:  "-",
-		}
+		row.status = "unhealthy"
+		row.delay = "-"
+		return row
 	}
-	return nodeDelayRow{
-		node:   sanitizeDisplayName(result.name),
-		status: "ok",
-		delay:  fmt.Sprintf("%dms", result.delay),
-	}
+	row.status = "ok"
+	row.delay = fmt.Sprintf("%dms", result.delay)
+	return row
 }
 
 func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
@@ -560,16 +606,18 @@ func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
 		statusWidth = max(statusWidth, displayWidth(row.status))
 	}
 	for _, row := range rows {
-		_, err := fmt.Fprintf(
-			w,
-			"%s%s  %s%s  %s\n",
+		line := fmt.Sprintf(
+			"%s%s  %s%s  %s",
 			row.node,
 			spacesForDisplayWidth(nodeWidth-displayWidth(row.node)),
 			row.status,
 			spacesForDisplayWidth(statusWidth-displayWidth(row.status)),
 			row.delay,
 		)
-		if err != nil {
+		if row.highlight {
+			line = currentNodeRowColor + line + ansiReset
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
@@ -747,7 +795,9 @@ func (a *App) Run(ctx context.Context, opts Options) error {
 		defer os.RemoveAll(started.session.RuntimeDir)
 	}
 
-	if err := a.printRunEndpoints(opts, started.controllerURL, started.session.RuntimeDir); err != nil {
+	printOpts := opts
+	printOpts.DefaultNode = started.session.Node
+	if err := a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir); err != nil {
 		return err
 	}
 
@@ -779,7 +829,9 @@ func (a *App) Start(ctx context.Context, opts Options) error {
 		}
 		return fmt.Errorf("save session state: %w", err)
 	}
-	return a.printRunEndpoints(opts, started.controllerURL, started.session.RuntimeDir)
+	printOpts := opts
+	printOpts.DefaultNode = started.session.Node
+	return a.printRunEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir)
 }
 
 // Status reports the current browsebox session status.
@@ -846,7 +898,11 @@ type startedSession struct {
 }
 
 func startSession(processCtx, controlCtx context.Context, opts Options) (startedSession, error) {
-	if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
+	if opts.SelectFastest {
+		if err := validateNodeTuning(opts); err != nil {
+			return startedSession{}, err
+		}
+	} else if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
 		return startedSession{}, err
 	}
 	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
@@ -875,6 +931,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	rewritten := mihomo.RewriteConfig(string(sourceConfig), mihomo.RuntimeConfigOptions{
 		ProxyPort:      opts.ProxyPort,
 		ControllerPort: opts.ControllerPort,
+		InterfaceName:  opts.MihomoInterfaceName,
 		Group:          opts.Group,
 		Node:           opts.DefaultNode,
 	})
@@ -899,13 +956,17 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	if err := waitControllerReady(controlCtx, tempClient, opts.Group); err != nil {
 		return startedSession{}, fmt.Errorf("wait for temp controller: %w", err)
 	}
+	selectedNode, err := startupNode(controlCtx, tempClient, opts)
+	if err != nil {
+		return startedSession{}, err
+	}
 	selectCtx, cancelSelect := context.WithTimeout(controlCtx, selectNodeTimeout)
-	selectErr := tempClient.SelectNode(selectCtx, opts.Group, opts.DefaultNode)
+	selectErr := tempClient.SelectNode(selectCtx, opts.Group, selectedNode)
 	cancelSelect()
 	if selectErr != nil {
-		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", opts.DefaultNode, opts.Group, selectErr)
+		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", selectedNode, opts.Group, selectErr)
 	}
-	if err := checkHealthURLs(controlCtx, tempClient, opts.DefaultNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
+	if err := checkHealthURLs(controlCtx, tempClient, selectedNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
 		return startedSession{}, err
 	}
 
@@ -935,7 +996,7 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 			RuntimeDir:       runtimeDir,
 			ChromeDir:        profileDir,
 			Group:            opts.Group,
-			Node:             opts.DefaultNode,
+			Node:             selectedNode,
 			URL:              opts.TargetURL,
 			StartedAt:        time.Now().UTC().Format(time.RFC3339),
 			MihomoBinaryPath: opts.MihomoBinaryPath,
@@ -947,9 +1008,32 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 	}, nil
 }
 
+func startupNode(ctx context.Context, client *mihomo.Client, opts Options) (string, error) {
+	if !opts.SelectFastest {
+		return strings.TrimSpace(opts.DefaultNode), nil
+	}
+
+	group, err := lookupProxyGroup(ctx, client, opts.Group)
+	if err != nil {
+		return "", fmt.Errorf("lookup proxy group %q: %w", opts.Group, err)
+	}
+	targetURL := opts.TargetURL
+	if len(opts.HealthURLs) > 0 {
+		targetURL = opts.HealthURLs[0]
+	}
+	results := collectNodeDelays(ctx, client, group.All, targetURL, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	sortNodeDelayResults(results)
+	for _, result := range results {
+		if result.healthy {
+			return result.name, nil
+		}
+	}
+	return "", fmt.Errorf("select fastest node in group %q: no healthy nodes", opts.Group)
+}
+
 func requireNode(opts Options) error {
-	if strings.TrimSpace(opts.DefaultNode) == "" {
-		return errors.New("--node is required for run and start")
+	if strings.TrimSpace(opts.DefaultNode) == "" && !opts.SelectFastest {
+		return errors.New("--node is required for run and start unless --select-fastest is set")
 	}
 	return nil
 }

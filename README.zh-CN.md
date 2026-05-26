@@ -74,7 +74,7 @@ go run ./cmd/browsebox --help
 ./browsebox groups
 ```
 
-并发检测节点延迟；健康节点按延迟从低到高排序，失败节点排在最后：
+并发检测节点延迟；默认隐藏 unhealthy 节点，健康节点按延迟从低到高排序；使用 `--show-unhealthy=true` 时，unhealthy 节点会显示在健康节点之后：
 
 ```bash
 ./browsebox nodes --group "<group>"
@@ -150,6 +150,7 @@ cp configs/config.example.yaml configs/config.yaml
 - `--runtime-cache-dir <path>`：mihomo geodata 缓存目录，用于复用 `geosite` / `geoip` 等数据文件。
 - `--state-dir <path>`：持久会话状态目录，默认位于 `~/.browsebox`。
 - `--mihomo <path>`：mihomo 可执行文件路径。
+- `--interface-name <name>` / `mihomo.interface_name`：强制临时 mihomo 出站走指定网卡，例如 `en0`，用于避免被主 Clash Verge/TUN 干扰。
 - `--chrome <path>`：Google Chrome 可执行文件路径。
 - `--chrome-profile-dir <path>`：Chrome profile 目录；留空时每次会话自动创建隔离临时 profile。
 - `browser.chrome_args`：额外 Chrome 启动参数配置；使用 block list 或 `[]`，每项可以带或不带开头的 `--`，会保留顺序并按参数名去重。`user-data-dir`、`proxy-server`、`remote-debugging-port` 由 browsebox 管理，配置中同名参数会被忽略。
@@ -157,6 +158,8 @@ cp configs/config.example.yaml configs/config.yaml
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
 - `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。
 - `--delay-timeout-ms <ms>`：mihomo 延迟检查超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。
+- `--show-unhealthy=true|false`：`nodes` 是否展示 unhealthy 节点，默认 `false`，只展示可用节点。
+- `--highlight-current=true|false`：`nodes` 是否用颜色标记当前节点，默认 `true`；如果当前节点被过滤则不会显示。
 - `--select-fastest`：仅用于显式 opt-in；`nodes` 测速后把主控制器的 `<group>` 切换到延迟最低的健康节点。
 - `--health-url <url>`：启动 `run` / `start` 前通过临时 mihomo 检查所选节点的 URL，可重复传入；任一检查失败会停止启动并清理临时资源。
 

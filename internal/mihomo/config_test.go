@@ -158,6 +158,36 @@ func TestRewriteConfigTreatsTunInlineCommentAsBlockStyle(t *testing.T) {
 	assertSingleTrailingNewline(t, got)
 }
 
+func TestRewriteConfigWritesConfiguredInterfaceName(t *testing.T) {
+	got := RewriteConfig("proxies: []\n", RuntimeConfigOptions{
+		ProxyPort:      17893,
+		ControllerPort: 19093,
+		InterfaceName:  "en0",
+	})
+
+	assertContains(t, got, "interface-name: en0\n")
+}
+
+func TestRewriteConfigReplacesExistingInterfaceNameWhenConfigured(t *testing.T) {
+	got := RewriteConfig("interface-name: utun5\nproxies: []\n", RuntimeConfigOptions{
+		ProxyPort:      17893,
+		ControllerPort: 19093,
+		InterfaceName:  "en0",
+	})
+
+	assertContains(t, got, "interface-name: en0\n")
+	assertNotContains(t, got, "interface-name: utun5")
+}
+
+func TestRewriteConfigDoesNotAddInterfaceNameWhenUnset(t *testing.T) {
+	got := RewriteConfig("proxies: []\n", RuntimeConfigOptions{
+		ProxyPort:      17893,
+		ControllerPort: 19093,
+	})
+
+	assertNotContains(t, got, "interface-name:")
+}
+
 func TestRewriteConfigForcesProxyGroupSelectionHint(t *testing.T) {
 	got := RewriteConfig("proxies: []\n", RuntimeConfigOptions{
 		ProxyPort:      17893,

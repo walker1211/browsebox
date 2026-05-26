@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,7 @@ func TestLoadConfigFileAppliesRuntimeSettings(t *testing.T) {
   controller_pipe: \\.\pipe\verge-mihomo
   config_path: ~/mihomo/config.yaml
   binary_path: ~/bin/mihomo
+  interface_name: en0
 browser:
   chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
   profile_dir: ~/.config/browsebox/chrome-profile
@@ -43,6 +45,8 @@ session:
 nodes:
   concurrency: 24
   delay_timeout_ms: 2500
+  show_unhealthy: true
+  highlight_current: false
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -58,28 +62,31 @@ nodes:
 	}
 
 	checks := map[string]bool{
-		"ControllerSocket": opts.ControllerSocket == "/tmp/browsebox.sock",
-		"ControllerURL":    opts.ControllerURL == "http://127.0.0.1:9097",
-		"ControllerPipe":   opts.ControllerPipe == `\\.\pipe\verge-mihomo`,
-		"SourceConfigPath": opts.SourceConfigPath == filepath.Join(home, "mihomo", "config.yaml"),
-		"MihomoBinaryPath": opts.MihomoBinaryPath == filepath.Join(home, "bin", "mihomo"),
-		"ChromeBinaryPath": opts.ChromeBinaryPath == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		"ChromeProfileDir": opts.ChromeProfileDir == filepath.Join(home, ".config", "browsebox", "chrome-profile"),
-		"ChromeArgs":       len(opts.ChromeArgs) == 4 && opts.ChromeArgs[0] == "no-first-run" && opts.ChromeArgs[3] == "disable-component-update",
-		"BrowserHeadless":  opts.BrowserHeadless,
-		"RuntimeDir":       opts.RuntimeDir == "/tmp/browsebox-runtime",
-		"RuntimeCacheDir":  opts.RuntimeCacheDir == filepath.Join(home, ".cache", "browsebox", "mihomo"),
-		"StateDir":         opts.StateDir == filepath.Join(home, ".browsebox-state"),
-		"Keep":             opts.Keep,
-		"ProxyPort":        opts.ProxyPort == 19001,
-		"ControllerPort":   opts.ControllerPort == 19002,
-		"DevToolsPort":     opts.DevToolsPort == 9333,
-		"Group":            opts.Group == "XFLTD",
-		"DefaultNode":      opts.DefaultNode == "node-a",
-		"TargetURL":        opts.TargetURL == "https://example.com/start",
-		"NodesConcurrency": opts.NodesConcurrency == 24,
-		"DelayTimeoutMS":   opts.DelayTimeoutMS == 2500,
-		"HealthURLs":       len(opts.HealthURLs) == 2 && opts.HealthURLs[0] == "https://example.com/health" && opts.HealthURLs[1] == "https://static.example.com/health",
+		"ControllerSocket":     opts.ControllerSocket == "/tmp/browsebox.sock",
+		"ControllerURL":        opts.ControllerURL == "http://127.0.0.1:9097",
+		"ControllerPipe":       opts.ControllerPipe == `\\.\pipe\verge-mihomo`,
+		"SourceConfigPath":     opts.SourceConfigPath == filepath.Join(home, "mihomo", "config.yaml"),
+		"MihomoBinaryPath":     opts.MihomoBinaryPath == filepath.Join(home, "bin", "mihomo"),
+		"MihomoInterfaceName":  opts.MihomoInterfaceName == "en0",
+		"ChromeBinaryPath":     opts.ChromeBinaryPath == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"ChromeProfileDir":     opts.ChromeProfileDir == filepath.Join(home, ".config", "browsebox", "chrome-profile"),
+		"ChromeArgs":           len(opts.ChromeArgs) == 4 && opts.ChromeArgs[0] == "no-first-run" && opts.ChromeArgs[3] == "disable-component-update",
+		"BrowserHeadless":      opts.BrowserHeadless,
+		"RuntimeDir":           opts.RuntimeDir == "/tmp/browsebox-runtime",
+		"RuntimeCacheDir":      opts.RuntimeCacheDir == filepath.Join(home, ".cache", "browsebox", "mihomo"),
+		"StateDir":             opts.StateDir == filepath.Join(home, ".browsebox-state"),
+		"Keep":                 opts.Keep,
+		"ProxyPort":            opts.ProxyPort == 19001,
+		"ControllerPort":       opts.ControllerPort == 19002,
+		"DevToolsPort":         opts.DevToolsPort == 9333,
+		"Group":                opts.Group == "XFLTD",
+		"DefaultNode":          opts.DefaultNode == "node-a",
+		"TargetURL":            opts.TargetURL == "https://example.com/start",
+		"NodesConcurrency":     opts.NodesConcurrency == 24,
+		"DelayTimeoutMS":       opts.DelayTimeoutMS == 2500,
+		"ShowUnhealthyNodes":   opts.ShowUnhealthyNodes,
+		"HighlightCurrentNode": !opts.HighlightCurrentNode,
+		"HealthURLs":           len(opts.HealthURLs) == 2 && opts.HealthURLs[0] == "https://example.com/health" && opts.HealthURLs[1] == "https://static.example.com/health",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -135,5 +142,42 @@ func TestLoadConfigFileRejectsInvalidNodesTuning(t *testing.T) {
 
 	if err := LoadConfigFile(path, &opts); err == nil {
 		t.Fatal("LoadConfigFile returned nil error, want invalid config error")
+	}
+}
+
+func TestLoadConfigFileRejectsInvalidNodesBooleans(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "show unhealthy",
+			content: "nodes:\n  show_unhealthy: maybe\n",
+			want:    "show_unhealthy must be true or false",
+		},
+		{
+			name:    "highlight current",
+			content: "nodes:\n  highlight_current: maybe\n",
+			want:    "highlight_current must be true or false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			opts := DefaultOptions()
+
+			err := LoadConfigFile(path, &opts)
+			if err == nil {
+				t.Fatal("LoadConfigFile returned nil error, want invalid config error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }

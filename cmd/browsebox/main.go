@@ -36,6 +36,7 @@ Flags:
   --runtime-cache-dir path  Cache directory for mihomo geodata files
   --state-dir path          Directory for persistent session state
   --mihomo path             Mihomo binary path
+  --interface-name name     Network interface for mihomo outbound dials
   --chrome path             Chrome binary path
   --chrome-profile-dir path Chrome profile directory
   --headless                Launch Chrome in headless mode
@@ -50,6 +51,8 @@ Flags:
   --health-url url          Health check URL; repeat to set multiple URLs
   --nodes-concurrency n     Concurrent node delay checks
   --delay-timeout-ms ms     Mihomo delay check timeout in milliseconds
+  --show-unhealthy bool    Show unhealthy nodes in nodes output
+  --highlight-current bool Highlight the current node in nodes output
   --select-fastest          Select the lowest-delay healthy node in the main controller after nodes checks
 `
 
@@ -176,6 +179,7 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.RuntimeCacheDir, "runtime-cache-dir", opts.RuntimeCacheDir, "cache directory for mihomo geodata files")
 	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for persistent session state")
 	flags.StringVar(&opts.MihomoBinaryPath, "mihomo", opts.MihomoBinaryPath, "mihomo binary path")
+	flags.StringVar(&opts.MihomoInterfaceName, "interface-name", opts.MihomoInterfaceName, "network interface for mihomo outbound dials")
 	flags.StringVar(&opts.ChromeBinaryPath, "chrome", opts.ChromeBinaryPath, "chrome binary path")
 	flags.StringVar(&opts.ChromeProfileDir, "chrome-profile-dir", opts.ChromeProfileDir, "chrome profile directory")
 	flags.BoolVar(&opts.BrowserHeadless, "headless", opts.BrowserHeadless, "launch Chrome in headless mode")
@@ -190,6 +194,8 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.Var(&healthURLFlag{values: &opts.HealthURLs}, "health-url", "health check URL; repeat to set multiple URLs")
 	flags.IntVar(&opts.NodesConcurrency, "nodes-concurrency", opts.NodesConcurrency, "concurrent node delay checks")
 	flags.IntVar(&opts.DelayTimeoutMS, "delay-timeout-ms", opts.DelayTimeoutMS, "mihomo delay check timeout in milliseconds")
+	flags.BoolVar(&opts.ShowUnhealthyNodes, "show-unhealthy", opts.ShowUnhealthyNodes, "show unhealthy nodes in nodes output")
+	flags.BoolVar(&opts.HighlightCurrentNode, "highlight-current", opts.HighlightCurrentNode, "highlight the current node in nodes output")
 	flags.BoolVar(&opts.SelectFastest, "select-fastest", opts.SelectFastest, "select the lowest-delay healthy node in the main controller after nodes checks")
 
 	return flags

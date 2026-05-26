@@ -106,7 +106,7 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	opts := app.DefaultOptions()
 	flags := newFlagSet("browsebox nodes", &opts)
 
-	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500", "--select-fastest", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--headless"}); err != nil {
+	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500", "--select-fastest", "--show-unhealthy=true", "--highlight-current=false", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--interface-name", "en0", "--headless"}); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if opts.NodesConcurrency != 32 {
@@ -118,11 +118,20 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	if !opts.SelectFastest {
 		t.Fatal("SelectFastest = false, want true")
 	}
+	if !opts.ShowUnhealthyNodes {
+		t.Fatal("ShowUnhealthyNodes = false, want true")
+	}
+	if opts.HighlightCurrentNode {
+		t.Fatal("HighlightCurrentNode = true, want false")
+	}
 	if opts.RuntimeCacheDir != "/tmp/cache" {
 		t.Fatalf("RuntimeCacheDir = %q, want /tmp/cache", opts.RuntimeCacheDir)
 	}
 	if opts.ChromeProfileDir != "/tmp/profile" {
 		t.Fatalf("ChromeProfileDir = %q, want /tmp/profile", opts.ChromeProfileDir)
+	}
+	if opts.MihomoInterfaceName != "en0" {
+		t.Fatalf("MihomoInterfaceName = %q, want en0", opts.MihomoInterfaceName)
 	}
 	if !opts.BrowserHeadless {
 		t.Fatal("BrowserHeadless = false, want true")
