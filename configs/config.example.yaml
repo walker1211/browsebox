@@ -1,19 +1,25 @@
+# 临时 mihomo 相关配置；browsebox 会从主 Clash Verge/mihomo 读取配置，再启动独立临时实例。
 mihomo:
-  # 主 Clash Verge/mihomo 的 Unix socket；browsebox 用它读取代理组和节点信息。
+  # 主 Clash Verge/mihomo 的 Unix controller socket，用于读取代理组、节点和测速。
   controller_socket: /tmp/verge/verge-mihomo.sock
-  # 源 mihomo 配置文件；不填时使用默认路径，browsebox 会复制并改写为临时运行配置。
+  # 主 controller 的本机 HTTP 地址；留空时使用 controller_socket。
+  controller_url: ""
+  # Windows named pipe controller；Windows 环境可用它替代 controller_socket。
+  controller_pipe: ""
+  # 源 mihomo 配置路径；通常可留给 browsebox 自动探测，路径不一致时再取消注释并修改。
   # config_path: ~/.config/mihomo/config.yaml
-  # mihomo/verge-mihomo 可执行文件路径；不填时按系统默认查找。
-  # binary_path: verge-mihomo
-  # 强制临时 mihomo 出站走指定网卡，常用于避免被主 Clash Verge/TUN 干扰。
-  # interface_name: en0
+  # mihomo 可执行文件路径；不配置时使用默认 verge-mihomo。
+  binary_path: verge-mihomo
+  # 强制临时 mihomo 出站走指定网卡；留空时不强制，常用于避免被主 Clash Verge/TUN 干扰。
+  interface_name: ""
 
+# Chrome 启动配置；只影响 browsebox 启动出来的独立 Chrome。
 browser:
-  # Chrome 可执行文件路径；不填时按系统默认路径查找。
-  # chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-  # 留空时使用每次会话自动创建的隔离临时 profile；需要固定登录态时再设置。
+  # Chrome 可执行文件路径；不配置时使用系统默认路径。
+  chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  # Chrome profile 目录；留空时每次会话自动创建隔离临时 profile，需要固定登录态时再设置。
   profile_dir: ""
-  # browser-mcp / CDP 自动化可设为 true；手动登录和排查问题时建议保持 false。
+  # 是否无头启动；browser-mcp / CDP 自动化可设为 true，手动登录和排查问题建议 false。
   headless: false
   # 额外 Chrome 启动参数；使用 block list 或 []，每项可以带或不带开头的 --。
   chrome_args:
@@ -22,53 +28,57 @@ browser:
     - disable-background-networking
     - disable-component-update
 
+# browsebox 自己的运行时目录、状态文件和清理策略。
 runtime:
-  # 临时运行目录；run/start 会在这里创建 mihomo 配置、缓存引用和临时 Chrome profile。
-  # dir: /tmp/browsebox
-  # mihomo geodata 缓存目录，用于复用 geosite/geoip 等数据，避免每次临时实例重复下载。
-  # cache_dir: ~/.cache/browsebox/mihomo
+  # 临时运行目录父目录；run/start 会在这里创建 mihomo 配置、缓存引用和临时 Chrome profile。
+  dir: /tmp/browsebox
+  # mihomo geodata 固定缓存目录；用于复用 geosite/geoip 等数据，减少临时实例重复下载。
+  cache_dir: ~/.cache/browsebox/mihomo
   # start/status/stop 使用的会话状态目录。
   state_dir: ~/.browsebox
   # run 退出后是否保留临时运行文件；false 会自动清理。
   keep: false
 
+# 本机端口配置；端口冲突时才需要修改。
 ports:
-  # 临时 mihomo 暴露给 Chrome 或上游项目使用的本地代理端口。
+  # 临时 mihomo 暴露给 Chrome / 上游项目使用的本地代理端口。
   proxy: 17997
   # browsebox 控制临时 mihomo 的 controller API 端口。
   controller: 17998
   # Chrome DevTools/CDP 端口，给 browser-mcp 或脚本连接。
   devtools: 9223
 
+# 默认会话配置；命令行参数会覆盖这里的值。
 session:
-  # run/start 使用的配置；group 留空时自动匹配当前 Clash/mihomo 选择的代理组。
+  # run/start 默认代理组；留空时自动匹配当前 Clash/mihomo 选择的代理组。
   group: ""
-  # node 留空且 select_fastest 为 true 时，会在临时 mihomo 控制器内自动选择健康均值最低的节点。
+  # run/start 默认节点；留空且 select_fastest 为 true 时自动选择健康均值最低的节点。
   node: ""
-  # run/start 默认打开的页面。
+  # run/start 默认打开的网址。
   url: https://x.com/OpenAI
-  # run/start 选节点和启动前健康检查使用的 URL；X 页面建议同时检查主站和静态资源域名。
+  # run/start 选节点和启动前健康检查 URL；任一失败会中止启动并清理临时资源。
   health_urls:
     - https://x.com
     - https://abs.twimg.com
   # 只影响 run/start 的临时控制器，不会修改主 Clash/mihomo 选择器。
   select_fastest: true
 
+# nodes 命令测速配置。
 nodes:
-  # ./browsebox nodes 默认探测的 URL；需要查 ChatGPT 节点时可以保持这个值。
+  # ./browsebox nodes 默认测速 URL，用于选出访问 ChatGPT 延迟最低的节点。
   health_urls:
     - https://chatgpt.com
-  # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 的当前组切到健康均值最低的节点。
+  # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 当前组切到健康均值最低的节点。
   select_fastest: true
-  # 并发探测节点数，过高可能让控制器或出口节点不稳定。
-  concurrency: 32
-  # 每个 health_url 的探测轮数，最终按所有 URL × 所有轮次的平均延迟排序。
-  probe_rounds: 3
-  # 多轮探测之间的间隔，单位毫秒；0 表示不额外等待。
+  # 并发测速数量，过高可能让控制器或出口节点不稳定。
+  concurrency: 64
+  # 每个节点、每个 URL 测几轮。
+  probe_rounds: 2
+  # 同一个节点每轮之间隔时间，单位毫秒；0 表示不额外等待。
   probe_interval_ms: 300
-  # 单次 mihomo delay 探测超时，单位毫秒。
+  # 单个节点测速超时，单位毫秒。
   delay_timeout_ms: 5000
   # 是否展示 unhealthy 节点；false 时只展示健康节点。
   show_unhealthy: false
-  # 是否用颜色标记当前节点；当前节点被过滤时不会显示。
+  # 是否用颜色标记当前节点；当前节点被过滤时，则不会显示。
   highlight_current: true
