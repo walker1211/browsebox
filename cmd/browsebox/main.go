@@ -180,7 +180,7 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.ChromeProfileDir, "chrome-profile-dir", opts.ChromeProfileDir, "chrome profile directory")
 	flags.BoolVar(&opts.BrowserHeadless, "headless", opts.BrowserHeadless, "launch Chrome in headless mode")
 	flags.BoolVar(&opts.Keep, "keep", opts.Keep, "keep runtime files after exit")
-	flags.StringVar(&opts.Group, "group", opts.Group, "proxy group name")
+	flags.Var(&groupFlag{opts: opts}, "group", "proxy group name")
 	flags.StringVar(&opts.DefaultNode, "node", opts.DefaultNode, "default proxy node name")
 	flags.IntVar(&opts.ProxyPort, "proxy-port", opts.ProxyPort, "local proxy port")
 	flags.IntVar(&opts.ControllerPort, "controller-port", opts.ControllerPort, "local controller port")
@@ -193,6 +193,23 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.BoolVar(&opts.SelectFastest, "select-fastest", opts.SelectFastest, "select the lowest-delay healthy node in the main controller after nodes checks")
 
 	return flags
+}
+
+type groupFlag struct {
+	opts *app.Options
+}
+
+func (f *groupFlag) String() string {
+	if f.opts == nil {
+		return ""
+	}
+	return f.opts.Group
+}
+
+func (f *groupFlag) Set(value string) error {
+	f.opts.Group = value
+	f.opts.GroupExplicit = true
+	return nil
 }
 
 type healthURLFlag struct {

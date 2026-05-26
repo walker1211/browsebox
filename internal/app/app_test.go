@@ -2020,6 +2020,100 @@ func TestNodesResolvesSingleSuffixProxyGroup(t *testing.T) {
 	}
 }
 
+func TestNodesAutoSelectsProxyGroupWhenDefaultGroupMissing(t *testing.T) {
+	requests := make(chan string, 1)
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"节点选择":{"name":"节点选择","type":"Selector","all":["slow-node","fast-node"]},"国外媒体":{"name":"国外媒体","type":"Selector","all":["slow-node"]}}}`))
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/proxies/%E8%8A%82%E7%82%B9%E9%80%89%E6%8B%A9":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"节点选择","type":"Selector","all":["slow-node","fast-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/slow-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":90}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":8}`))
+		case r.Method == http.MethodPut && r.URL.EscapedPath() == "/proxies/%E8%8A%82%E7%82%B9%E9%80%89%E6%8B%A9":
+			requests <- r.URL.EscapedPath()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+	opts.SelectFastest = true
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	select {
+	case got := <-requests:
+		if got != "/proxies/%E8%8A%82%E7%82%B9%E9%80%89%E6%8B%A9" {
+			t.Fatalf("PUT path = %q, want auto-resolved 节点选择 group", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Nodes did not select fastest node in auto-resolved group")
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"fast-node", "8ms", "selected fast-node (8ms) for group 节点选择"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nodes output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestNodesDoesNotAutoSelectWhenGroupIsExplicit(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/Missing":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"proxies":{"节点选择":{"name":"节点选择","type":"Selector","all":["node-a"]}}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "Missing"
+	opts.GroupExplicit = true
+
+	err := application.Nodes(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Nodes returned nil error, want explicit group lookup error")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(err.Error(), `lookup proxy group "Missing"`) {
+		t.Fatalf("error = %q, want explicit group lookup context", err.Error())
+	}
+}
+
 func TestNodesReturnsAmbiguousSuffixProxyGroupError(t *testing.T) {
 	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

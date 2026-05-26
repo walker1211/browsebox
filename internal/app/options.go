@@ -25,6 +25,7 @@ type Options struct {
 	BrowserHeadless  bool
 	Keep             bool
 	Group            string
+	GroupExplicit    bool
 	DefaultNode      string
 	ProxyPort        int
 	ControllerPort   int

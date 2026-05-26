@@ -264,7 +264,17 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 			if errors.As(resolveErr, &ambiguousErr) {
 				return ambiguousErr
 			}
-			err = originalLookupErr
+			var autoGroupName string
+			var autoErr error
+			if !opts.GroupExplicit {
+				autoGroupName, autoErr = autoProxyGroupName(ctx, client)
+			}
+			if autoErr == nil && autoGroupName != "" {
+				groupName = autoGroupName
+				group, err = lookupProxyGroup(ctx, client, groupName)
+			} else {
+				err = originalLookupErr
+			}
 		}
 	}
 	if err != nil {
@@ -370,6 +380,88 @@ func resolveProxyGroupName(ctx context.Context, client *mihomo.Client, name stri
 		return "", &ambiguousProxyGroupError{name: name, matches: matches}
 	}
 	return name, nil
+}
+
+func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, error) {
+	groupCtx, cancelGroup := context.WithTimeout(ctx, controllerLookupTimeout)
+	groups, err := client.ProxyGroups(groupCtx)
+	cancelGroup()
+	if err != nil {
+		return "", fmt.Errorf("list proxy groups: %w", err)
+	}
+
+	type candidate struct {
+		name  string
+		score int
+	}
+	var candidates []candidate
+	for _, group := range groups {
+		score := autoProxyGroupScore(group)
+		if score <= 0 {
+			continue
+		}
+		candidates = append(candidates, candidate{name: group.Name, score: score})
+	}
+	if len(candidates) == 0 {
+		return "", errors.New("no selectable proxy groups")
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].name < candidates[j].name
+	})
+	if len(candidates) > 1 && candidates[0].score == candidates[1].score {
+		var matches []string
+		for _, candidate := range candidates {
+			if candidate.score != candidates[0].score {
+				break
+			}
+			matches = append(matches, candidate.name)
+		}
+		return "", &ambiguousProxyGroupError{name: "auto", matches: matches}
+	}
+	return candidates[0].name, nil
+}
+
+func autoProxyGroupScore(group mihomo.ProxyGroupInfo) int {
+	if group.Name == "" || len(group.All) == 0 {
+		return 0
+	}
+
+	score := 0
+	switch strings.ToLower(group.Type) {
+	case "selector":
+		score += 100
+	case "urltest", "url-test":
+		score += 40
+	case "fallback", "loadbalance", "load-balance":
+		score += 30
+	default:
+		score += 10
+	}
+
+	name := strings.ToLower(group.Name)
+	switch {
+	case strings.Contains(group.Name, "节点选择"):
+		score += 1000
+	case strings.Contains(name, "proxy"):
+		score += 500
+	case strings.Contains(name, "select"):
+		score += 400
+	case strings.Contains(name, "selector"):
+		score += 300
+	case strings.Contains(name, "global"):
+		score += 100
+	case strings.Contains(name, "all"):
+		score += 80
+	}
+	for _, blocked := range []string{"direct", "reject", "广告", "拦截"} {
+		if strings.Contains(name, blocked) || strings.Contains(group.Name, blocked) {
+			score -= 1000
+		}
+	}
+	return score
 }
 
 func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []string, targetURL string, concurrency, timeoutMS int) []nodeDelayResult {
