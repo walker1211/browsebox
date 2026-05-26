@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -106,11 +109,17 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	opts := app.DefaultOptions()
 	flags := newFlagSet("browsebox nodes", &opts)
 
-	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--delay-timeout-ms", "2500", "--select-fastest", "--show-unhealthy=true", "--highlight-current=false", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--interface-name", "en0", "--headless"}); err != nil {
+	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--probe-rounds", "5", "--probe-interval-ms", "250", "--delay-timeout-ms", "2500", "--select-fastest", "--show-unhealthy=true", "--highlight-current=false", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--interface-name", "en0", "--headless"}); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if opts.NodesConcurrency != 32 {
 		t.Fatalf("NodesConcurrency = %d, want 32", opts.NodesConcurrency)
+	}
+	if opts.NodeProbeRounds != 5 {
+		t.Fatalf("NodeProbeRounds = %d, want 5", opts.NodeProbeRounds)
+	}
+	if opts.NodeProbeIntervalMS != 250 {
+		t.Fatalf("NodeProbeIntervalMS = %d, want 250", opts.NodeProbeIntervalMS)
 	}
 	if opts.DelayTimeoutMS != 2500 {
 		t.Fatalf("DelayTimeoutMS = %d, want 2500", opts.DelayTimeoutMS)
@@ -135,6 +144,88 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	}
 	if !opts.BrowserHeadless {
 		t.Fatal("BrowserHeadless = false, want true")
+	}
+}
+
+func TestCommandFlagsOverrideConfigNodeProbeTuning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("nodes:\n  concurrency: 8\n  probe_rounds: 5\n  probe_interval_ms: 250\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := app.DefaultOptions()
+	if err := app.LoadConfigFile(path, &opts); err != nil {
+		t.Fatalf("LoadConfigFile returned error: %v", err)
+	}
+
+	flags := newFlagSet("browsebox nodes", &opts)
+	if err := flags.Parse([]string{"--nodes-concurrency", "12", "--probe-rounds", "2", "--probe-interval-ms", "50"}); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if opts.NodesConcurrency != 12 {
+		t.Fatalf("NodesConcurrency = %d, want CLI override 12", opts.NodesConcurrency)
+	}
+	if opts.NodeProbeRounds != 2 {
+		t.Fatalf("NodeProbeRounds = %d, want CLI override 2", opts.NodeProbeRounds)
+	}
+	if opts.NodeProbeIntervalMS != 50 {
+		t.Fatalf("NodeProbeIntervalMS = %d, want CLI override 50", opts.NodeProbeIntervalMS)
+	}
+}
+
+func TestCommandDefaultsUseNodesConfigForNodes(t *testing.T) {
+	opts := app.DefaultOptions()
+	opts.HealthURLs = []string{"https://x.example"}
+	opts.SessionHealthURLs = []string{"https://x.example"}
+	opts.NodesHealthURLs = []string{"https://chatgpt.com"}
+	opts.SessionSelectFastest = false
+	opts.NodesSelectFastest = true
+
+	applyCommandDefaults("nodes", &opts, commandOverrides{})
+
+	wantHealthURLs := []string{"https://chatgpt.com"}
+	if !reflect.DeepEqual(opts.HealthURLs, wantHealthURLs) {
+		t.Fatalf("HealthURLs = %#v, want %#v", opts.HealthURLs, wantHealthURLs)
+	}
+	if !opts.SelectFastest {
+		t.Fatal("SelectFastest = false, want nodes default true")
+	}
+}
+
+func TestCommandDefaultsUseSessionConfigForStart(t *testing.T) {
+	opts := app.DefaultOptions()
+	opts.HealthURLs = []string{"https://chatgpt.com"}
+	opts.SessionHealthURLs = []string{"https://x.com", "https://abs.twimg.com"}
+	opts.NodesHealthURLs = []string{"https://chatgpt.com"}
+	opts.SessionSelectFastest = true
+	opts.NodesSelectFastest = false
+
+	applyCommandDefaults("start", &opts, commandOverrides{})
+
+	wantHealthURLs := []string{"https://x.com", "https://abs.twimg.com"}
+	if !reflect.DeepEqual(opts.HealthURLs, wantHealthURLs) {
+		t.Fatalf("HealthURLs = %#v, want %#v", opts.HealthURLs, wantHealthURLs)
+	}
+	if !opts.SelectFastest {
+		t.Fatal("SelectFastest = false, want session default true")
+	}
+}
+
+func TestCommandDefaultsKeepExplicitFlags(t *testing.T) {
+	opts := app.DefaultOptions()
+	opts.HealthURLs = []string{"https://cli.example"}
+	opts.NodesHealthURLs = []string{"https://chatgpt.com"}
+	opts.SelectFastest = false
+	opts.NodesSelectFastest = true
+
+	applyCommandDefaults("nodes", &opts, commandOverrides{healthURLs: true, selectFastest: true})
+
+	wantHealthURLs := []string{"https://cli.example"}
+	if !reflect.DeepEqual(opts.HealthURLs, wantHealthURLs) {
+		t.Fatalf("HealthURLs = %#v, want %#v", opts.HealthURLs, wantHealthURLs)
+	}
+	if opts.SelectFastest {
+		t.Fatal("SelectFastest = true, want explicit flag value to be preserved")
 	}
 }
 

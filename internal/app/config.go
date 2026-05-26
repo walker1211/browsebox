@@ -56,8 +56,16 @@ func applyConfig(content []byte, opts *Options) error {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			listKey = key
-			if section == "session" && (key == "health_urls" || key == "health-urls") {
-				opts.HealthURLs = nil
+			switch section {
+			case "session":
+				if key == "health_urls" || key == "health-urls" {
+					opts.HealthURLs = nil
+					opts.SessionHealthURLs = nil
+				}
+			case "nodes":
+				if key == "health_urls" || key == "health-urls" {
+					opts.NodesHealthURLs = nil
+				}
 			}
 			continue
 		}
@@ -100,7 +108,13 @@ func applyConfigListItem(section, key, value string, opts *Options) error {
 		}
 	case "session":
 		if key == "health_urls" || key == "health-urls" {
-			opts.HealthURLs = append(opts.HealthURLs, cleanConfigString(value))
+			cleaned := cleanConfigString(value)
+			opts.HealthURLs = append(opts.HealthURLs, cleaned)
+			opts.SessionHealthURLs = append(opts.SessionHealthURLs, cleaned)
+		}
+	case "nodes":
+		if key == "health_urls" || key == "health-urls" {
+			opts.NodesHealthURLs = append(opts.NodesHealthURLs, cleanConfigString(value))
 		}
 	}
 	return nil
@@ -204,7 +218,20 @@ func applySessionConfig(key, value string, opts *Options) error {
 	case "url", "target_url", "target-url":
 		opts.TargetURL = cleanConfigString(value)
 	case "health_url", "health-url":
-		opts.HealthURLs = []string{cleanConfigString(value)}
+		cleaned := cleanConfigString(value)
+		opts.HealthURLs = []string{cleaned}
+		opts.SessionHealthURLs = []string{cleaned}
+	case "health_urls", "health-urls":
+		if cleanConfigString(value) == "[]" {
+			opts.HealthURLs = []string{}
+			opts.SessionHealthURLs = []string{}
+		}
+	case "select_fastest", "select-fastest":
+		selectFastest, err := strconv.ParseBool(cleanConfigString(value))
+		if err != nil {
+			return fmt.Errorf("%s must be true or false", key)
+		}
+		opts.SessionSelectFastest = selectFastest
 	}
 	return nil
 }
@@ -225,6 +252,30 @@ func applyNodesConfig(key, value string, opts *Options) error {
 		}
 		opts.HighlightCurrentNode = highlightCurrent
 		return nil
+	case "select_fastest", "select-fastest":
+		selectFastest, err := strconv.ParseBool(cleanConfigString(value))
+		if err != nil {
+			return fmt.Errorf("%s must be true or false", key)
+		}
+		opts.NodesSelectFastest = selectFastest
+		return nil
+	case "health_url", "health-url":
+		opts.NodesHealthURLs = []string{cleanConfigString(value)}
+		return nil
+	case "health_urls", "health-urls":
+		if cleanConfigString(value) == "[]" {
+			opts.NodesHealthURLs = []string{}
+		}
+		return nil
+	}
+
+	if key == "probe_interval_ms" || key == "probe-interval-ms" {
+		intervalMS, err := strconv.Atoi(cleanConfigString(value))
+		if err != nil || intervalMS < 0 {
+			return fmt.Errorf("%s must be zero or a positive integer", key)
+		}
+		opts.NodeProbeIntervalMS = intervalMS
+		return nil
 	}
 
 	intValue, ok, err := parsePositiveConfigInt(key, value)
@@ -234,6 +285,8 @@ func applyNodesConfig(key, value string, opts *Options) error {
 	switch key {
 	case "concurrency":
 		opts.NodesConcurrency = intValue
+	case "probe_rounds", "probe-rounds":
+		opts.NodeProbeRounds = intValue
 	case "delay_timeout_ms", "delay-timeout-ms":
 		opts.DelayTimeoutMS = intValue
 	}
@@ -242,7 +295,7 @@ func applyNodesConfig(key, value string, opts *Options) error {
 
 func parsePositiveConfigInt(key, value string) (int, bool, error) {
 	switch key {
-	case "proxy", "proxy_port", "proxy-port", "controller", "controller_port", "controller-port", "devtools", "devtools_port", "devtools-port", "concurrency", "delay_timeout_ms", "delay-timeout-ms":
+	case "proxy", "proxy_port", "proxy-port", "controller", "controller_port", "controller-port", "devtools", "devtools_port", "devtools-port", "concurrency", "probe_rounds", "probe-rounds", "delay_timeout_ms", "delay-timeout-ms":
 		intValue, err := strconv.Atoi(cleanConfigString(value))
 		if err != nil || intValue <= 0 {
 			return 0, true, fmt.Errorf("%s must be a positive integer", key)
