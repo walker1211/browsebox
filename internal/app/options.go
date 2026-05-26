@@ -51,7 +51,7 @@ func DefaultOptions() Options {
 			"no-first-run",
 			"no-default-browser-check",
 		},
-		Group:                "All",
+		Group:                "",
 		DefaultNode:          "",
 		ProxyPort:            17997,
 		ControllerPort:       17998,

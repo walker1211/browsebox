@@ -30,7 +30,8 @@ ports:
   devtools: 9223
 
 session:
-  group: All
+  # 留空时自动匹配当前 Clash/mihomo 选择的代理组；也可以填固定组名，例如 XFLTD。
+  group: ""
   node: ""
   url: https://x.com/OpenAI
   health_urls:

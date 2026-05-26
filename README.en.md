@@ -52,12 +52,12 @@ go run ./cmd/browsebox --help
 
 ## Quick Start
 
-Minimal golden path: list proxy groups, list nodes, then launch an isolated browser session with one selected node.
+Minimal golden path: list proxy groups, list nodes, then launch an isolated browser session with one selected node. When `--group` is omitted, browsebox tries to auto-match the proxy group currently selected in Clash/mihomo.
 
 ```bash
 ./browsebox groups
-./browsebox nodes --group "<group>"
-./browsebox run --group "<group>" --node "<node>"
+./browsebox nodes
+./browsebox run --node "<node>"
 ```
 
 Show help:
@@ -77,25 +77,31 @@ List proxy groups:
 Check node delays concurrently; unhealthy nodes are hidden by default and healthy nodes are sorted by ascending delay. When `--show-unhealthy=true` is used, unhealthy nodes are shown after healthy nodes:
 
 ```bash
+./browsebox nodes
+```
+
+If browsebox cannot uniquely match the current proxy group, specify it explicitly:
+
+```bash
 ./browsebox nodes --group "<group>"
 ```
 
 Explicitly switch the main Clash/mihomo selector to the lowest-delay healthy node from the current check:
 
 ```bash
-./browsebox nodes --group "<group>" --url "https://chatgpt.com" --select-fastest
+./browsebox nodes --url "https://chatgpt.com" --select-fastest
 ```
 
 Launch a one-shot isolated session in the foreground. It exits on interrupt and cleans runtime files by default:
 
 ```bash
-./browsebox run --group "<group>" --node "<node>" --url "https://example.com"
+./browsebox run --node "<node>" --url "https://example.com"
 ```
 
 Start a persistent isolated session:
 
 ```bash
-./browsebox start --group "<group>" --node "<node>"
+./browsebox start --node "<node>"
 ```
 
 Check persistent session status:
@@ -138,7 +144,6 @@ Common flags can be passed after any command:
 ./browsebox run \
   --config ~/.config/mihomo/config.yaml \
   --state-dir ~/.browsebox \
-  --group "<group>" \
   --node "<node>"
 ```
 
@@ -160,7 +165,8 @@ Common configuration options:
 - `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
 - `--show-unhealthy=true|false`: whether `nodes` shows unhealthy nodes, defaulting to `false` so only available nodes are shown.
 - `--highlight-current=true|false`: whether `nodes` color-highlights the current node, defaulting to `true`; hidden current nodes are not shown separately.
-- `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch `<group>` in the main controller to the lowest-delay healthy node.
+- `--group <group>` / `session.group`: proxy group name. Leave it empty to auto-match the proxy group currently selected in Clash/mihomo; specify it explicitly if the match is ambiguous.
+- `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch the selected or auto-matched group in the main controller to the lowest-delay healthy node.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 
 ## Local verification and release
@@ -188,7 +194,7 @@ The release workflow runs history secret scanning, multi-platform builds, checks
 
 ## Safety notes
 
-- By default, `nodes` only reads proxy groups and node delay from the main controller; it switches the main controller selector only when `--select-fastest` is passed.
+- By default, `nodes` only reads proxy groups and node delay from the main controller; it switches the selected or auto-matched group only when `--select-fastest` is passed.
 - `run` / `start` copy and rewrite the source config, then select `<node>` only inside the temporary mihomo controller.
 - Proxy, temporary controller, and DevTools endpoints are bound to `127.0.0.1` only.
 - Do not commit runtime configs, state, logs, local config, or files containing credentials.
