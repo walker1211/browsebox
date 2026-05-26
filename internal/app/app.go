@@ -430,7 +430,7 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		if _, ok := byName[strings.TrimSpace(selectedGroup.Now)]; ok {
 			continue
 		}
-		if !isAutoProxyGroupCandidate(selectedGroup.Name) {
+		if !isAutoProxyGroupCandidate(selectedGroup) {
 			continue
 		}
 		selectedGroups[selectedGroup.Name] = struct{}{}
@@ -448,7 +448,7 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		if _, ok := byName[selectedName]; ok {
 			continue
 		}
-		if !isAutoProxyGroupCandidate(group.Name) {
+		if !isAutoProxyGroupCandidate(group) {
 			continue
 		}
 		currentGroups[group.Name] = struct{}{}
@@ -466,8 +466,12 @@ func selectsProxyGroup(group mihomo.ProxyGroupInfo, byName map[string]mihomo.Pro
 	return ok && len(selectedGroup.All) > 0
 }
 
-func isAutoProxyGroupCandidate(name string) bool {
-	return name != "GLOBAL"
+func isAutoProxyGroupCandidate(group mihomo.ProxyGroupInfo) bool {
+	if group.Name == "GLOBAL" {
+		return false
+	}
+	typeName := strings.ToLower(strings.TrimSpace(group.Type))
+	return typeName == "" || typeName == "selector"
 }
 
 func selectedLeafProxyGroupName(group mihomo.ProxyGroupInfo, byName map[string]mihomo.ProxyGroupInfo) (string, bool, error) {
