@@ -895,6 +895,37 @@ func (a *App) Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
+// Proxy launches a temporary isolated proxy without Chrome.
+func (a *App) Proxy(ctx context.Context, opts Options) error {
+	if err := requireNode(opts); err != nil {
+		return err
+	}
+
+	signalCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	childCtx, cancelChildren := context.WithCancel(signalCtx)
+	defer cancelChildren()
+
+	started, err := startProxy(childCtx, signalCtx, opts)
+	if err != nil {
+		return err
+	}
+	defer stopProcess(started.mihomoProcess)
+	if !opts.Keep {
+		defer os.RemoveAll(started.session.RuntimeDir)
+	}
+
+	printOpts := opts
+	printOpts.Group = started.session.Group
+	printOpts.DefaultNode = started.session.Node
+	if err := a.printProxyEndpoints(printOpts, started.controllerURL, started.session.RuntimeDir); err != nil {
+		return err
+	}
+
+	<-signalCtx.Done()
+	return nil
+}
+
 // Start starts a persistent isolated browser session.
 func (a *App) Start(ctx context.Context, opts Options) error {
 	if err := requireNode(opts); err != nil {
@@ -988,83 +1019,28 @@ type startedSession struct {
 	controllerURL string
 }
 
+type startedProxy struct {
+	session       state.Session
+	mihomoProcess process
+	controllerURL string
+}
+
 func startSession(processCtx, controlCtx context.Context, opts Options) (startedSession, error) {
-	if opts.SelectFastest {
-		if err := validateNodeTuning(opts); err != nil {
-			return startedSession{}, err
-		}
-	} else if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
+	started, err := startProxy(processCtx, controlCtx, opts)
+	if err != nil {
 		return startedSession{}, err
 	}
-	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort, opts.DevToolsPort); err != nil {
-		return startedSession{}, fmt.Errorf("check local ports: %w", err)
-	}
-	if err := resolveStartupProxyGroup(controlCtx, &opts); err != nil {
-		return startedSession{}, err
-	}
-
-	sourceConfig, err := readFile(opts.SourceConfigPath)
-	if err != nil {
-		return startedSession{}, fmt.Errorf("read source config: %w", err)
-	}
-
-	runtimeDir, err := createRuntimeDir(opts.RuntimeDir)
-	if err != nil {
-		return startedSession{}, fmt.Errorf("create runtime dir: %w", err)
-	}
-	cleanupRuntime := true
+	cleanupProxy := true
 	defer func() {
-		if cleanupRuntime && !opts.Keep {
-			_ = os.RemoveAll(runtimeDir)
-		}
-	}()
-	if err := prepareMihomoDataFiles(opts.SourceConfigPath, opts.RuntimeCacheDir, runtimeDir); err != nil {
-		return startedSession{}, fmt.Errorf("prepare mihomo data files: %w", err)
-	}
-
-	rewritten := mihomo.RewriteConfig(string(sourceConfig), mihomo.RuntimeConfigOptions{
-		ProxyPort:      opts.ProxyPort,
-		ControllerPort: opts.ControllerPort,
-		InterfaceName:  opts.MihomoInterfaceName,
-		Group:          opts.Group,
-		Node:           opts.DefaultNode,
-	})
-	configPath, err := writeRuntimeConfig(runtimeDir, []byte(rewritten))
-	if err != nil {
-		return startedSession{}, fmt.Errorf("write runtime config: %w", err)
-	}
-
-	mihomoProcess, err := startMihomoProcess(processCtx, opts.MihomoBinaryPath, runtimeDir, configPath)
-	if err != nil {
-		return startedSession{}, fmt.Errorf("start mihomo: %w", err)
-	}
-	cleanupMihomo := true
-	defer func() {
-		if cleanupMihomo {
-			stopProcess(mihomoProcess)
+		if cleanupProxy {
+			stopProcess(started.mihomoProcess)
+			if !opts.Keep {
+				_ = os.RemoveAll(started.session.RuntimeDir)
+			}
 		}
 	}()
 
-	controllerURL := fmt.Sprintf("http://127.0.0.1:%d", opts.ControllerPort)
-	tempClient := mihomo.NewTCPClient(controllerURL)
-	if err := waitControllerReady(controlCtx, tempClient, opts.Group); err != nil {
-		return startedSession{}, fmt.Errorf("wait for temp controller: %w", err)
-	}
-	selectedNode, err := startupNode(controlCtx, tempClient, opts)
-	if err != nil {
-		return startedSession{}, err
-	}
-	selectCtx, cancelSelect := context.WithTimeout(controlCtx, selectNodeTimeout)
-	selectErr := tempClient.SelectNode(selectCtx, opts.Group, selectedNode)
-	cancelSelect()
-	if selectErr != nil {
-		return startedSession{}, fmt.Errorf("select temp node %q in group %q: %w", selectedNode, opts.Group, selectErr)
-	}
-	if err := checkHealthURLs(controlCtx, tempClient, selectedNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
-		return startedSession{}, err
-	}
-
-	profileDir := chromeProfileDir(opts, runtimeDir)
+	profileDir := chromeProfileDir(opts, started.session.RuntimeDir)
 	chromeProcess, err := startChrome(processCtx, opts.ChromeBinaryPath, browser.Options{
 		UserDataDir:  profileDir,
 		ProxyPort:    opts.ProxyPort,
@@ -1077,27 +1053,112 @@ func startSession(processCtx, controlCtx context.Context, opts Options) (started
 		return startedSession{}, fmt.Errorf("start chrome: %w", err)
 	}
 
+	session := started.session
+	session.ChromePID = chromeProcess.PID()
+	session.DevToolsPort = opts.DevToolsPort
+	session.ChromeDir = profileDir
+	session.URL = opts.TargetURL
+	session.ChromeBinaryPath = opts.ChromeBinaryPath
+	cleanupProxy = false
+	return startedSession{
+		session:       session,
+		mihomoProcess: started.mihomoProcess,
+		chromeProcess: chromeProcess,
+		controllerURL: started.controllerURL,
+	}, nil
+}
+
+func startProxy(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+	if opts.SelectFastest {
+		if err := validateNodeTuning(opts); err != nil {
+			return startedProxy{}, err
+		}
+	} else if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
+		return startedProxy{}, err
+	}
+	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort); err != nil {
+		return startedProxy{}, fmt.Errorf("check local ports: %w", err)
+	}
+	if err := resolveStartupProxyGroup(controlCtx, &opts); err != nil {
+		return startedProxy{}, err
+	}
+
+	sourceConfig, err := readFile(opts.SourceConfigPath)
+	if err != nil {
+		return startedProxy{}, fmt.Errorf("read source config: %w", err)
+	}
+
+	runtimeDir, err := createRuntimeDir(opts.RuntimeDir)
+	if err != nil {
+		return startedProxy{}, fmt.Errorf("create runtime dir: %w", err)
+	}
+	cleanupRuntime := true
+	defer func() {
+		if cleanupRuntime && !opts.Keep {
+			_ = os.RemoveAll(runtimeDir)
+		}
+	}()
+	if err := prepareMihomoDataFiles(opts.SourceConfigPath, opts.RuntimeCacheDir, runtimeDir); err != nil {
+		return startedProxy{}, fmt.Errorf("prepare mihomo data files: %w", err)
+	}
+
+	rewritten := mihomo.RewriteConfig(string(sourceConfig), mihomo.RuntimeConfigOptions{
+		ProxyPort:      opts.ProxyPort,
+		ControllerPort: opts.ControllerPort,
+		InterfaceName:  opts.MihomoInterfaceName,
+		Group:          opts.Group,
+		Node:           opts.DefaultNode,
+	})
+	configPath, err := writeRuntimeConfig(runtimeDir, []byte(rewritten))
+	if err != nil {
+		return startedProxy{}, fmt.Errorf("write runtime config: %w", err)
+	}
+
+	mihomoProcess, err := startMihomoProcess(processCtx, opts.MihomoBinaryPath, runtimeDir, configPath)
+	if err != nil {
+		return startedProxy{}, fmt.Errorf("start mihomo: %w", err)
+	}
+	cleanupMihomo := true
+	defer func() {
+		if cleanupMihomo {
+			stopProcess(mihomoProcess)
+		}
+	}()
+
+	controllerURL := fmt.Sprintf("http://127.0.0.1:%d", opts.ControllerPort)
+	tempClient := mihomo.NewTCPClient(controllerURL)
+	if err := waitControllerReady(controlCtx, tempClient, opts.Group); err != nil {
+		return startedProxy{}, fmt.Errorf("wait for temp controller: %w", err)
+	}
+	selectedNode, err := startupNode(controlCtx, tempClient, opts)
+	if err != nil {
+		return startedProxy{}, err
+	}
+	selectCtx, cancelSelect := context.WithTimeout(controlCtx, selectNodeTimeout)
+	selectErr := tempClient.SelectNode(selectCtx, opts.Group, selectedNode)
+	cancelSelect()
+	if selectErr != nil {
+		return startedProxy{}, fmt.Errorf("select temp node %q in group %q: %w", selectedNode, opts.Group, selectErr)
+	}
+	if err := checkHealthURLs(controlCtx, tempClient, selectedNode, opts.HealthURLs, opts.DelayTimeoutMS); err != nil {
+		return startedProxy{}, err
+	}
+
 	cleanupRuntime = false
 	cleanupMihomo = false
-	return startedSession{
+	return startedProxy{
 		session: state.Session{
 			ManagedBy:        managedByBrowsebox,
 			MihomoPID:        mihomoProcess.PID(),
-			ChromePID:        chromeProcess.PID(),
 			ProxyPort:        opts.ProxyPort,
 			ControllerPort:   opts.ControllerPort,
-			DevToolsPort:     opts.DevToolsPort,
 			RuntimeDir:       runtimeDir,
-			ChromeDir:        profileDir,
 			Group:            opts.Group,
 			Node:             selectedNode,
-			URL:              opts.TargetURL,
 			StartedAt:        time.Now().UTC().Format(time.RFC3339),
 			MihomoBinaryPath: opts.MihomoBinaryPath,
-			ChromeBinaryPath: opts.ChromeBinaryPath,
 		},
 		mihomoProcess: mihomoProcess,
-		chromeProcess: chromeProcess,
 		controllerURL: controllerURL,
 	}, nil
 }
@@ -1326,6 +1387,25 @@ func (a *App) printRunEndpoints(opts Options, controllerURL, runtimeDir string) 
 		fmt.Sprintf("DevTools: http://127.0.0.1:%d", opts.DevToolsPort),
 		fmt.Sprintf("Selected: %s / %s", sanitizeDisplayName(opts.Group), sanitizeDisplayName(opts.DefaultNode)),
 		fmt.Sprintf("Opened: %s", opts.TargetURL),
+	}
+	if opts.Keep {
+		lines = append(lines, fmt.Sprintf("Cleanup: kept runtime dir %s", runtimeDir))
+	} else {
+		lines = append(lines, "Cleanup: runtime files will be removed on exit; use --keep to preserve them.")
+	}
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(a.stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) printProxyEndpoints(opts Options, controllerURL, runtimeDir string) error {
+	lines := []string{
+		fmt.Sprintf("Proxy: http://127.0.0.1:%d", opts.ProxyPort),
+		fmt.Sprintf("Controller: %s", controllerURL),
+		fmt.Sprintf("Selected: %s / %s", sanitizeDisplayName(opts.Group), sanitizeDisplayName(opts.DefaultNode)),
 	}
 	if opts.Keep {
 		lines = append(lines, fmt.Sprintf("Cleanup: kept runtime dir %s", runtimeDir))
