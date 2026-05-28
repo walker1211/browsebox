@@ -69,6 +69,96 @@ func TestStartRequiresNodeBeforeReadingConfigOrState(t *testing.T) {
 	}
 }
 
+func TestProxyStartsMihomoWithoutChromeAndCleansUpOnCancel(t *testing.T) {
+	disableLocalPortCheck(t)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["node-a"],"now":"node-a"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(controller.Close)
+	_, portText, err := net.SplitHostPort(strings.TrimPrefix(controller.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split controller URL: %v", err)
+	}
+	controllerPort, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse controller port: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.yaml")
+	if err := os.WriteFile(sourcePath, []byte("mixed-port: 7890\n"), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	runtimeBaseDir := filepath.Join(tempDir, "runtime")
+
+	mihomoProc := &recordingProcess{pid: 1111}
+	oldStartProcess := startMihomoProcess
+	oldStartChrome := startChrome
+	t.Cleanup(func() {
+		startMihomoProcess = oldStartProcess
+		startChrome = oldStartChrome
+	})
+	startMihomoProcess = func(ctx context.Context, binaryPath, dir, configPath string) (process, error) {
+		return mihomoProc, nil
+	}
+	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		t.Fatal("Proxy must not start Chrome")
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.SourceConfigPath = sourcePath
+	opts.RuntimeDir = runtimeBaseDir
+	opts.Group = "All"
+	opts.DefaultNode = "node-a"
+	opts.ProxyPort = 17997
+	opts.ControllerPort = controllerPort
+	opts.HealthURLs = nil
+
+	done := make(chan error, 1)
+	go func() { done <- application.Proxy(ctx, opts) }()
+
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(stdout.String(), "Proxy: http://127.0.0.1:17997") {
+		select {
+		case err := <-done:
+			t.Fatalf("Proxy exited before ready: %v", err)
+		case <-deadline:
+			t.Fatalf("stdout missing proxy endpoint:\n%s", stdout.String())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Proxy returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Proxy did not exit after context cancellation")
+	}
+	if !mihomoProc.signaled && !mihomoProc.killed {
+		t.Fatal("Proxy did not stop mihomo")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestValidateLocalControllerURL(t *testing.T) {
 	tests := []struct {
 		name    string

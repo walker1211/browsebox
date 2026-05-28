@@ -22,6 +22,7 @@ Usage:
 Commands:
   groups   List available proxy groups
   nodes    List available proxy nodes
+  proxy    Launch a temporary isolated proxy without Chrome
   run      Launch a temporary isolated browser session
   start    Start a persistent isolated browser session
   status   Show browsebox session status
@@ -131,6 +132,8 @@ func dispatch(ctx context.Context, application *app.App, command string, opts ap
 		return application.Groups(ctx, opts)
 	case "nodes":
 		return application.Nodes(ctx, opts)
+	case "proxy":
+		return application.Proxy(ctx, opts)
 	case "run":
 		return application.Run(ctx, opts)
 	case "start":
@@ -158,7 +161,7 @@ func shouldLoadConfig(args []string) bool {
 
 func isKnownCommand(command string) bool {
 	switch command {
-	case "groups", "nodes", "run", "start", "status", "stop":
+	case "groups", "nodes", "proxy", "run", "start", "status", "stop":
 		return true
 	default:
 		return false
@@ -194,7 +197,7 @@ func applyCommandDefaults(command string, opts *app.Options, overrides commandOv
 		if !overrides.selectFastest {
 			opts.SelectFastest = opts.NodesSelectFastest
 		}
-	case "run", "start":
+	case "proxy", "run", "start":
 		if !overrides.healthURLs && opts.SessionHealthURLs != nil {
 			opts.HealthURLs = cloneStrings(opts.SessionHealthURLs)
 		}

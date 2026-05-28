@@ -92,10 +92,16 @@ Explicitly switch the main Clash/mihomo selector to the lowest-delay healthy nod
 ./browsebox nodes --url "https://chatgpt.com" --select-fastest
 ```
 
-Launch a one-shot isolated session in the foreground. It exits on interrupt and cleans runtime files by default:
+Launch a one-shot isolated browser session in the foreground. It exits on interrupt and cleans runtime files by default:
 
 ```bash
 ./browsebox run --node "<node>" --url "https://example.com"
+```
+
+Launch a one-shot isolated proxy without Chrome:
+
+```bash
+./browsebox proxy --select-fastest --health-url "https://example.com"
 ```
 
 Start a persistent isolated session:

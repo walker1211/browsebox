@@ -92,10 +92,16 @@ go run ./cmd/browsebox --help
 ./browsebox nodes --url "https://chatgpt.com" --select-fastest
 ```
 
-启动一次性隔离会话，前台运行，收到中断信号后退出并清理运行时文件：
+启动一次性隔离浏览器会话，前台运行，收到中断信号后退出并清理运行时文件：
 
 ```bash
 ./browsebox run --node "<node>" --url "https://example.com"
+```
+
+启动只提供本地代理端口、不启动 Chrome 的一次性隔离代理：
+
+```bash
+./browsebox proxy --select-fastest --health-url "https://example.com"
 ```
 
 启动持久隔离会话：
