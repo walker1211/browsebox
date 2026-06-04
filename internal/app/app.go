@@ -435,7 +435,7 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		}
 		selectedGroups[selectedGroup.Name] = struct{}{}
 	}
-	if name, ok, err := singleProxyGroupName(selectedGroups); ok || err != nil {
+	if name, ok, err := singleProxyGroupName(selectedGroups, byName); ok || err != nil {
 		return name, err
 	}
 
@@ -453,7 +453,7 @@ func autoProxyGroupName(ctx context.Context, client *mihomo.Client) (string, err
 		}
 		currentGroups[group.Name] = struct{}{}
 	}
-	if name, ok, err := singleProxyGroupName(currentGroups); ok || err != nil {
+	if name, ok, err := singleProxyGroupName(currentGroups, byName); ok || err != nil {
 		return name, err
 	}
 
@@ -472,6 +472,15 @@ func isAutoProxyGroupCandidate(group mihomo.ProxyGroupInfo) bool {
 	}
 	typeName := strings.ToLower(strings.TrimSpace(group.Type))
 	return typeName == "" || typeName == "selector"
+}
+
+func preferredAutoProxyGroupName(byName map[string]mihomo.ProxyGroupInfo) (string, bool) {
+	const preferredName = "自动选择"
+	group, ok := byName[preferredName]
+	if !ok || len(group.All) == 0 {
+		return "", false
+	}
+	return preferredName, true
 }
 
 func selectedLeafProxyGroupName(group mihomo.ProxyGroupInfo, byName map[string]mihomo.ProxyGroupInfo) (string, bool, error) {
@@ -494,7 +503,7 @@ func selectedLeafProxyGroupName(group mihomo.ProxyGroupInfo, byName map[string]m
 	}
 }
 
-func singleProxyGroupName(names map[string]struct{}) (string, bool, error) {
+func singleProxyGroupName(names map[string]struct{}, byName map[string]mihomo.ProxyGroupInfo) (string, bool, error) {
 	if len(names) == 0 {
 		return "", false, nil
 	}
@@ -504,6 +513,9 @@ func singleProxyGroupName(names map[string]struct{}) (string, bool, error) {
 	}
 	sort.Strings(matches)
 	if len(matches) > 1 {
+		if name, ok := preferredAutoProxyGroupName(byName); ok {
+			return name, true, nil
+		}
 		return "", true, &ambiguousProxyGroupError{name: "auto", matches: matches}
 	}
 	return matches[0], true, nil
