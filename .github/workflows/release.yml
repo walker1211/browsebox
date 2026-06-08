@@ -78,7 +78,7 @@ jobs:
           mkdir -p "dist/${package}/configs"
           go build -trimpath -ldflags="-s -w" -o "dist/${package}/browsebox${EXT}" ./cmd/browsebox
           go build -trimpath -ldflags="-s -w" -o "dist/${package}/browsebox-skill-sync${EXT}" ./cmd/skill-sync
-          cp LICENSE README.md README.zh-CN.md README.en.md "dist/${package}/"
+          cp LICENSE README.md README.zh-CN.md "dist/${package}/"
           cp configs/config.example.yaml "dist/${package}/configs/config.example.yaml"
           tar -C dist -czf "dist/${package}.tar.gz" "$package"
 
