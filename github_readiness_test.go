@@ -55,7 +55,7 @@ func TestGitHubReleaseWorkflowReadiness(t *testing.T) {
 		"package=\"browsebox-${SUFFIX}\"",
 		"./cmd/browsebox",
 		"./cmd/skill-sync",
-		"LICENSE README.md README.zh-CN.md README.en.md",
+		"LICENSE README.md README.zh-CN.md",
 		"configs/config.example.yaml",
 		"actions/upload-artifact@v7",
 		"actions/download-artifact@v8",

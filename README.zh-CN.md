@@ -1,3 +1,5 @@
+[English](./README.md)
+
 # browsebox
 
 browsebox 是一个 Go 标准库 CLI，用于通过隔离的临时 mihomo 控制器启动独立的 Google Chrome 代理浏览会话。它可以从现有 Clash Verge Rev/mihomo 控制器读取节点列表，并支持一次性会话与持久会话。
