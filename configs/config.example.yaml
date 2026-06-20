@@ -67,7 +67,8 @@ session:
 nodes:
   # ./browsebox nodes 默认测速 URL，用于选出访问 ChatGPT 延迟最低的节点。
   health_urls:
-    - https://chatgpt.com
+    - https://chatgpt.com/cdn-cgi/trace
+    #- https://api.openai.com
   # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 当前组切到健康均值最低的节点。
   select_fastest: true
   # 并发测速数量，过高可能让控制器或出口节点不稳定。
