@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1959,7 +1960,7 @@ func TestNodesHighlightsVisibleCurrentNode(t *testing.T) {
 	if !strings.Contains(out, "\x1b[1;36mcurrent-node") {
 		t.Fatalf("nodes output did not color current node:\n%q", out)
 	}
-	if !strings.Contains(out, "10ms\x1b[0m") {
+	if !strings.Contains(out, "-\x1b[0m") {
 		t.Fatalf("nodes output did not reset color after current row:\n%q", out)
 	}
 	if strings.Contains(out, "CURRENT") {
@@ -2143,10 +2144,10 @@ func TestNodesAlignsStatusColumnForWideNodeNames(t *testing.T) {
 	}
 
 	want := "nodes: total 3, ok 2, shown 3\n" +
-		"NODE      STATUS     DELAY\n" +
-		"香港节点  ok         7ms\n" +
-		"plain     ok         12ms\n" +
-		"dead      unhealthy  -\n"
+		"NODE      STATUS     DELAY  CHECKS\n" +
+		"香港节点  ok         7ms    -\n" +
+		"plain     ok         12ms   -\n" +
+		"dead      unhealthy  -      health:unavailable\n"
 	if got := stdout.String(); got != want {
 		t.Fatalf("nodes output mismatch:\ngot:\n%q\nwant:\n%q", got, want)
 	}
@@ -2201,6 +2202,499 @@ func TestNodesSortsHealthyDelaysAscendingAndUnhealthyLast(t *testing.T) {
 	}
 	if !(fastIndex < slowIndex && slowIndex < deadIndex) {
 		t.Fatalf("nodes output not sorted by healthy delay with unhealthy last:\n%s", out)
+	}
+}
+
+func TestNodesCapabilityChecksClassifyAndSortRows(t *testing.T) {
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["fast-failed","unhealthy","fast-ok"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-failed/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":8}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-ok/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/unhealthy/delay":
+			http.Error(w, `{"message":"timeout"}`, http.StatusGatewayTimeout)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	var selectedMu sync.Mutex
+	selectedName := ""
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/proxies/All" {
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+		var payload struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode select payload: %v", err)
+		}
+		selectedMu.Lock()
+		selectedName = payload.Name
+		selectedMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer controller.Close()
+
+	oldStartCapabilityProxy := startCapabilityProxy
+	oldNewCapabilityHTTPClient := newCapabilityHTTPClient
+	t.Cleanup(func() {
+		startCapabilityProxy = oldStartCapabilityProxy
+		newCapabilityHTTPClient = oldNewCapabilityHTTPClient
+	})
+	startCapabilityProxy = func(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+		return startedProxy{
+			session:       state.Session{RuntimeDir: t.TempDir()},
+			mihomoProcess: &recordingProcess{pid: 4000},
+			controllerURL: controller.URL,
+		}, nil
+	}
+	newCapabilityHTTPClient = func(proxyPort, timeoutMS int) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			selectedMu.Lock()
+			node := selectedName
+			selectedMu.Unlock()
+			status := http.StatusUnauthorized
+			body := `{"error":{"message":"Missing bearer authentication"}}`
+			if node == "fast-failed" {
+				status = http.StatusForbidden
+				body = `{"error":{"code":"unsupported_country_region_territory"}}`
+			}
+			return &http.Response{
+				StatusCode: status,
+				Status:     http.StatusText(status),
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		})}
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 1
+	opts.NodesCapabilityConcurrency = 1
+	opts.ShowUnhealthyNodes = true
+	opts.NodesCapabilityChecks = []CapabilityCheck{{
+		Name:             "openai",
+		URL:              "https://api.openai.example",
+		PassStatus:       []int{http.StatusUnauthorized},
+		FailStatus:       []int{403},
+		FailBodyContains: []string{"unsupported_country_region_territory"},
+	}}
+
+	if err := application.Nodes(context.Background(), opts); err != nil {
+		t.Fatalf("Nodes returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"NODE", "STATUS", "DELAY", "CHECKS", "fast-ok", "ok", "10ms", "fast-failed", "failed", "8ms", "openai:unsupported_country_region_territory", "unhealthy", "health:unavailable"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nodes output missing %q:\n%s", want, out)
+		}
+	}
+	okIndex := strings.Index(out, "fast-ok")
+	failedIndex := strings.Index(out, "fast-failed")
+	unhealthyIndex := strings.Index(out, "unhealthy")
+	if okIndex == -1 || failedIndex == -1 || unhealthyIndex == -1 {
+		t.Fatalf("nodes output missing expected rows:\n%s", out)
+	}
+	if !(okIndex < failedIndex && failedIndex < unhealthyIndex) {
+		t.Fatalf("nodes output not sorted by ok, failed, unhealthy groups:\n%s", out)
+	}
+}
+
+func TestNodesStartsCapabilityChecksAsSoonAsNodeIsHealthy(t *testing.T) {
+	var slowDelayStartedOnce sync.Once
+	slowDelayStarted := make(chan struct{})
+	allowSlowDelay := make(chan struct{})
+	capabilityStarted := make(chan struct{})
+	var capabilityStartedOnce sync.Once
+
+	socketPath := startAppUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/All":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"All","type":"Selector","all":["fast-node","slow-node"]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/fast-node/delay":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":10}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies/slow-node/delay":
+			slowDelayStartedOnce.Do(func() { close(slowDelayStarted) })
+			<-allowSlowDelay
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"delay":500}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/proxies/All" {
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer controller.Close()
+
+	oldStartCapabilityProxy := startCapabilityProxy
+	oldNewCapabilityHTTPClient := newCapabilityHTTPClient
+	t.Cleanup(func() {
+		startCapabilityProxy = oldStartCapabilityProxy
+		newCapabilityHTTPClient = oldNewCapabilityHTTPClient
+	})
+	startCapabilityProxy = func(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+		return startedProxy{
+			session:       state.Session{RuntimeDir: t.TempDir()},
+			mihomoProcess: &recordingProcess{pid: 3000},
+			controllerURL: controller.URL,
+		}, nil
+	}
+	newCapabilityHTTPClient = func(proxyPort, timeoutMS int) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			capabilityStartedOnce.Do(func() { close(capabilityStarted) })
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Status:     http.StatusText(http.StatusUnauthorized),
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"Missing bearer authentication"}}`)),
+				Request:    r,
+			}, nil
+		})}
+	}
+
+	var stdout, stderr bytes.Buffer
+	application := New(&stdout, &stderr)
+	opts := DefaultOptions()
+	opts.ControllerSocket = socketPath
+	opts.ControllerPipe = ""
+	opts.Group = "All"
+	opts.HealthURLs = []string{"https://health.example/ping"}
+	opts.NodesConcurrency = 2
+	opts.NodesCapabilityConcurrency = 1
+	opts.ShowUnhealthyNodes = true
+	opts.NodesCapabilityChecks = []CapabilityCheck{{
+		Name:       "openai",
+		URL:        "https://api.openai.example/v1/models",
+		PassStatus: []int{http.StatusUnauthorized},
+	}}
+
+	done := make(chan error, 1)
+	go func() { done <- application.Nodes(context.Background(), opts) }()
+
+	select {
+	case <-slowDelayStarted:
+	case err := <-done:
+		t.Fatalf("Nodes returned before slow health check started: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow health check did not start")
+	}
+
+	select {
+	case <-capabilityStarted:
+		close(allowSlowDelay)
+	case <-time.After(200 * time.Millisecond):
+		close(allowSlowDelay)
+		if err := <-done; err != nil {
+			t.Fatalf("Nodes returned error after releasing slow health check: %v", err)
+		}
+		t.Fatal("capability check did not start while another health check was still running")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Nodes returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Nodes did not finish after slow health check was released")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestProbeNodeCapabilitiesFromSkipsBootstrapSelectError(t *testing.T) {
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/proxies/All" {
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer controller.Close()
+
+	oldStartCapabilityProxy := startCapabilityProxy
+	oldNewCapabilityHTTPClient := newCapabilityHTTPClient
+	t.Cleanup(func() {
+		startCapabilityProxy = oldStartCapabilityProxy
+		newCapabilityHTTPClient = oldNewCapabilityHTTPClient
+	})
+	startCapabilityProxy = func(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+		if opts.DefaultNode == "missing-node" {
+			return startedProxy{}, errors.New(`select temp node "missing-node" in group "All": proxy not exist`)
+		}
+		return startedProxy{
+			session:       state.Session{RuntimeDir: t.TempDir()},
+			mihomoProcess: &recordingProcess{pid: 5000},
+			controllerURL: controller.URL,
+		}, nil
+	}
+	newCapabilityHTTPClient = func(proxyPort, timeoutMS int) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Status:     http.StatusText(http.StatusUnauthorized),
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"Missing bearer authentication"}}`)),
+				Request:    r,
+			}, nil
+		})}
+	}
+
+	results := []nodeDelayResult{
+		{index: 0, name: "missing-node", delay: 10, healthy: true, capabilityOK: true, checks: "-"},
+		{index: 1, name: "working-node", delay: 20, healthy: true, capabilityOK: true, checks: "-"},
+	}
+	healthyJobs := make(chan int, len(results))
+	healthyJobs <- 0
+	healthyJobs <- 1
+	close(healthyJobs)
+	opts := DefaultOptions()
+	opts.Group = "All"
+	opts.NodesCapabilityConcurrency = 1
+	opts.NodesCapabilityChecks = []CapabilityCheck{{
+		Name:       "openai",
+		URL:        "https://api.openai.example/v1/models",
+		PassStatus: []int{http.StatusUnauthorized},
+	}}
+
+	if err := probeNodeCapabilitiesFrom(context.Background(), opts, results, healthyJobs); err != nil {
+		t.Fatalf("probeNodeCapabilitiesFrom returned error: %v", err)
+	}
+	if results[0].capabilityOK || results[0].checks != "proxy:select_error" {
+		t.Fatalf("missing-node = capabilityOK %v checks %q, want select error", results[0].capabilityOK, results[0].checks)
+	}
+	if !results[1].capabilityOK || results[1].checks != "-" {
+		t.Fatalf("working-node = capabilityOK %v checks %q, want ok", results[1].capabilityOK, results[1].checks)
+	}
+}
+
+func TestDefaultProbeNodeCapabilitiesUsesIndependentWorkers(t *testing.T) {
+	var inFlight int32
+	var maxInFlight int32
+	capabilityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&inFlight, 1)
+		for {
+			observed := atomic.LoadInt32(&maxInFlight)
+			if current <= observed || atomic.CompareAndSwapInt32(&maxInFlight, observed, current) {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"Missing bearer authentication"}}`))
+	}))
+	defer capabilityServer.Close()
+
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/proxies/All" {
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer controller.Close()
+
+	oldStartCapabilityProxy := startCapabilityProxy
+	oldNewCapabilityHTTPClient := newCapabilityHTTPClient
+	t.Cleanup(func() {
+		startCapabilityProxy = oldStartCapabilityProxy
+		newCapabilityHTTPClient = oldNewCapabilityHTTPClient
+	})
+
+	var proxyPorts []int
+	var controllerPorts []int
+	startCapabilityProxy = func(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+		proxyPorts = append(proxyPorts, opts.ProxyPort)
+		controllerPorts = append(controllerPorts, opts.ControllerPort)
+		return startedProxy{
+			session:       state.Session{RuntimeDir: t.TempDir()},
+			mihomoProcess: &recordingProcess{pid: 1000 + len(proxyPorts)},
+			controllerURL: controller.URL,
+		}, nil
+	}
+	newCapabilityHTTPClient = func(proxyPort, timeoutMS int) *http.Client {
+		return capabilityServer.Client()
+	}
+
+	results := []nodeDelayResult{
+		{index: 0, name: "node-a", delay: 10, healthy: true, capabilityOK: true, checks: "-"},
+		{index: 1, name: "node-b", delay: 20, healthy: true, capabilityOK: true, checks: "-"},
+		{index: 2, name: "node-c", delay: 30, healthy: true, capabilityOK: true, checks: "-"},
+		{index: 3, name: "node-d", delay: 40, healthy: true, capabilityOK: true, checks: "-"},
+	}
+	opts := DefaultOptions()
+	opts.Group = "All"
+	opts.ProxyPort = 19001
+	opts.ControllerPort = 19002
+	opts.NodesCapabilityConcurrency = 2
+	opts.NodesCapabilityChecks = []CapabilityCheck{{
+		Name:       "openai",
+		URL:        capabilityServer.URL + "/v1/models",
+		PassStatus: []int{http.StatusUnauthorized},
+	}}
+
+	got, err := defaultProbeNodeCapabilities(context.Background(), opts, results)
+	if err != nil {
+		t.Fatalf("defaultProbeNodeCapabilities returned error: %v", err)
+	}
+	if !reflect.DeepEqual(proxyPorts, []int{19001, 19003}) {
+		t.Fatalf("proxyPorts = %#v, want independent worker ports", proxyPorts)
+	}
+	if !reflect.DeepEqual(controllerPorts, []int{19002, 19004}) {
+		t.Fatalf("controllerPorts = %#v, want independent worker ports", controllerPorts)
+	}
+	if atomic.LoadInt32(&maxInFlight) < 2 {
+		t.Fatalf("max concurrent capability requests = %d, want at least 2", maxInFlight)
+	}
+	for _, result := range got {
+		if !result.capabilityOK || result.checks != "-" {
+			t.Fatalf("result for %s = capabilityOK %v checks %q, want ok", result.name, result.capabilityOK, result.checks)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestDefaultProbeNodeCapabilitiesUsesFreshHTTPClientPerNode(t *testing.T) {
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/proxies/All" {
+			t.Fatalf("unexpected controller request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer controller.Close()
+
+	oldStartCapabilityProxy := startCapabilityProxy
+	oldNewCapabilityHTTPClient := newCapabilityHTTPClient
+	t.Cleanup(func() {
+		startCapabilityProxy = oldStartCapabilityProxy
+		newCapabilityHTTPClient = oldNewCapabilityHTTPClient
+	})
+
+	startCapabilityProxy = func(processCtx, controlCtx context.Context, opts Options) (startedProxy, error) {
+		return startedProxy{
+			session:       state.Session{RuntimeDir: t.TempDir()},
+			mihomoProcess: &recordingProcess{pid: 2000},
+			controllerURL: controller.URL,
+		}, nil
+	}
+	var clientCreations int32
+	newCapabilityHTTPClient = func(proxyPort, timeoutMS int) *http.Client {
+		clientID := atomic.AddInt32(&clientCreations, 1)
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			status := http.StatusUnauthorized
+			body := `{"error":{"message":"Missing bearer authentication"}}`
+			if clientID == 2 {
+				status = http.StatusForbidden
+				body = `{"error":{"code":"unsupported_country_region_territory"}}`
+			}
+			return &http.Response{
+				StatusCode: status,
+				Status:     http.StatusText(status),
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		})}
+	}
+
+	results := []nodeDelayResult{
+		{index: 0, name: "node-a", delay: 10, healthy: true, capabilityOK: true, checks: "-"},
+		{index: 1, name: "node-b", delay: 20, healthy: true, capabilityOK: true, checks: "-"},
+	}
+	opts := DefaultOptions()
+	opts.Group = "All"
+	opts.NodesCapabilityConcurrency = 1
+	opts.NodesCapabilityChecks = []CapabilityCheck{{
+		Name:             "openai",
+		URL:              "https://api.openai.example/v1/responses",
+		PassStatus:       []int{http.StatusUnauthorized},
+		FailBodyContains: []string{"unsupported_country_region_territory"},
+	}}
+
+	got, err := defaultProbeNodeCapabilities(context.Background(), opts, results)
+	if err != nil {
+		t.Fatalf("defaultProbeNodeCapabilities returned error: %v", err)
+	}
+	if atomic.LoadInt32(&clientCreations) != 2 {
+		t.Fatalf("HTTP clients created = %d, want one per node", clientCreations)
+	}
+	if !got[0].capabilityOK || got[0].checks != "-" {
+		t.Fatalf("node-a = capabilityOK %v checks %q, want ok", got[0].capabilityOK, got[0].checks)
+	}
+	if got[1].capabilityOK || got[1].checks != "openai:unsupported_country_region_territory" {
+		t.Fatalf("node-b = capabilityOK %v checks %q, want unsupported region failure", got[1].capabilityOK, got[1].checks)
+	}
+}
+
+func TestEvaluateCapabilityChecksTreatsModelsUnauthorizedAsReachableAndUnsupportedRegionAsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Missing bearer authentication"}}`))
+		case "/blocked":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"unsupported_country_region_territory"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	passes := evaluateCapabilityChecks(context.Background(), client, []CapabilityCheck{{
+		Name:       "openai",
+		URL:        server.URL + "/v1/models",
+		PassStatus: []int{http.StatusUnauthorized},
+	}})
+	if len(passes) != 0 {
+		t.Fatalf("401 capability check failures = %#v, want none", passes)
+	}
+
+	fails := evaluateCapabilityChecks(context.Background(), client, []CapabilityCheck{{
+		Name:             "openai",
+		URL:              server.URL + "/blocked",
+		FailStatus:       []int{http.StatusForbidden},
+		FailBodyContains: []string{"unsupported_country_region_territory"},
+	}})
+	want := []string{"openai:unsupported_country_region_territory"}
+	if !reflect.DeepEqual(fails, want) {
+		t.Fatalf("403 capability check failures = %#v, want %#v", fails, want)
 	}
 }
 

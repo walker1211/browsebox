@@ -44,15 +44,16 @@ session:
     - https://static.example.com/health
   select_fastest: true
 nodes:
-  health_urls:
-    - https://chatgpt.com
   select_fastest: true
-  concurrency: 24
-  probe_rounds: 5
-  probe_interval_ms: 250
   delay_timeout_ms: 2500
   show_unhealthy: true
   highlight_current: false
+  health:
+    urls:
+      - https://chatgpt.com
+    concurrency: 24
+    probe_rounds: 5
+    probe_interval_ms: 250
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -107,6 +108,60 @@ nodes:
 	}
 }
 
+func TestLoadConfigFileParsesNodesCapabilityChecks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`nodes:
+  capability:
+    concurrency: 7
+    checks:
+      - name: openai
+        url: https://api.openai.com/v1/models
+        pass_status:
+          - 401
+        fail_status:
+          - 403
+        fail_body_contains:
+          - unsupported_country_region_territory
+      - name: chatgpt
+        url: https://chatgpt.com/
+        pass_status:
+          - 200
+          - 302
+        fail_body_contains:
+          - just a moment
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := DefaultOptions()
+
+	if err := LoadConfigFile(path, &opts); err != nil {
+		t.Fatalf("LoadConfigFile returned error: %v", err)
+	}
+
+	want := []CapabilityCheck{
+		{
+			Name:             "openai",
+			URL:              "https://api.openai.com/v1/models",
+			PassStatus:       []int{401},
+			FailStatus:       []int{403},
+			FailBodyContains: []string{"unsupported_country_region_territory"},
+		},
+		{
+			Name:             "chatgpt",
+			URL:              "https://chatgpt.com/",
+			PassStatus:       []int{200, 302},
+			FailBodyContains: []string{"just a moment"},
+		},
+	}
+	if !reflect.DeepEqual(opts.NodesCapabilityChecks, want) {
+		t.Fatalf("NodesCapabilityChecks = %#v, want %#v", opts.NodesCapabilityChecks, want)
+	}
+	if opts.NodesCapabilityConcurrency != 7 {
+		t.Fatalf("NodesCapabilityConcurrency = %d, want 7", opts.NodesCapabilityConcurrency)
+	}
+}
+
 func TestLoadConfigFileAppendsChromeArgsToDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("browser:\n  chrome_args:\n    - disable-background-networking\n"), 0o600); err != nil {
@@ -147,7 +202,7 @@ func TestLoadConfigFileMissingSucceeds(t *testing.T) {
 
 func TestLoadConfigFileRejectsInvalidNodesTuning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("nodes:\n  concurrency: 0\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("nodes:\n  health:\n    concurrency: 0\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := DefaultOptions()
@@ -157,9 +212,25 @@ func TestLoadConfigFileRejectsInvalidNodesTuning(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFileRejectsInvalidCapabilityConcurrency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("nodes:\n  capability:\n    concurrency: 0\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := DefaultOptions()
+
+	err := LoadConfigFile(path, &opts)
+	if err == nil {
+		t.Fatal("LoadConfigFile returned nil error, want invalid config error")
+	}
+	if !strings.Contains(err.Error(), "concurrency must be a positive integer") {
+		t.Fatalf("error = %v, want capability concurrency validation", err)
+	}
+}
+
 func TestLoadConfigFileRejectsInvalidProbeInterval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("nodes:\n  probe_interval_ms: -1\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("nodes:\n  health:\n    probe_interval_ms: -1\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := DefaultOptions()

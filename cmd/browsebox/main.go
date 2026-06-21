@@ -51,12 +51,13 @@ Flags:
   --target-url url          Legacy alias for --url
   --health-url url          Health check URL; repeat to set multiple URLs
   --nodes-concurrency n     Concurrent node delay checks
+  --capability-concurrency n Concurrent capability HTTP check workers
   --probe-rounds n          Delay check rounds per health URL when selecting/listing nodes
   --probe-interval-ms ms    Delay between probe rounds in milliseconds
   --delay-timeout-ms ms     Mihomo delay check timeout in milliseconds
-  --show-unhealthy bool    Show unhealthy nodes in nodes output
+  --show-unhealthy bool    Show failed and unhealthy nodes in nodes output
   --highlight-current bool Highlight the current node in nodes output
-  --select-fastest          Select the lowest-delay healthy node in the main controller after nodes checks
+  --select-fastest          Select the lowest-delay ok node in the main controller after nodes checks
 `
 
 func main() {
@@ -242,12 +243,13 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.TargetURL, "target-url", opts.TargetURL, "legacy alias for --url")
 	flags.Var(&healthURLFlag{values: &opts.HealthURLs}, "health-url", "health check URL; repeat to set multiple URLs")
 	flags.IntVar(&opts.NodesConcurrency, "nodes-concurrency", opts.NodesConcurrency, "concurrent node delay checks")
+	flags.IntVar(&opts.NodesCapabilityConcurrency, "capability-concurrency", opts.NodesCapabilityConcurrency, "concurrent capability HTTP check workers")
 	flags.IntVar(&opts.NodeProbeRounds, "probe-rounds", opts.NodeProbeRounds, "delay check rounds per health URL when selecting/listing nodes")
 	flags.IntVar(&opts.NodeProbeIntervalMS, "probe-interval-ms", opts.NodeProbeIntervalMS, "delay between probe rounds in milliseconds")
 	flags.IntVar(&opts.DelayTimeoutMS, "delay-timeout-ms", opts.DelayTimeoutMS, "mihomo delay check timeout in milliseconds")
-	flags.BoolVar(&opts.ShowUnhealthyNodes, "show-unhealthy", opts.ShowUnhealthyNodes, "show unhealthy nodes in nodes output")
+	flags.BoolVar(&opts.ShowUnhealthyNodes, "show-unhealthy", opts.ShowUnhealthyNodes, "show failed and unhealthy nodes in nodes output")
 	flags.BoolVar(&opts.HighlightCurrentNode, "highlight-current", opts.HighlightCurrentNode, "highlight the current node in nodes output")
-	flags.BoolVar(&opts.SelectFastest, "select-fastest", opts.SelectFastest, "select the lowest-delay healthy node in the main controller after nodes checks")
+	flags.BoolVar(&opts.SelectFastest, "select-fastest", opts.SelectFastest, "select the lowest-delay ok node in the main controller after nodes checks")
 
 	return flags
 }

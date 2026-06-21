@@ -26,7 +26,11 @@ func LoadConfigFile(path string, opts *Options) error {
 
 func applyConfig(content []byte, opts *Options) error {
 	section := ""
+	subsection := ""
 	listKey := ""
+	capabilityCheckIndex := -1
+	capabilityCheckItemIndent := -1
+	capabilityCheckListKey := ""
 	for lineNumber, rawLine := range strings.Split(string(content), "\n") {
 		line := stripConfigComment(rawLine)
 		trimmed := strings.TrimSpace(line)
@@ -35,13 +39,52 @@ func applyConfig(content []byte, opts *Options) error {
 		}
 		if isTopLevelConfigKey(line) && strings.HasSuffix(trimmed, ":") {
 			section = strings.TrimSuffix(trimmed, ":")
+			subsection = ""
 			listKey = ""
+			capabilityCheckIndex = -1
+			capabilityCheckItemIndent = -1
+			capabilityCheckListKey = ""
 			continue
 		}
 		if section == "" {
 			continue
 		}
+		indent := configIndent(line)
+		if section == "nodes" && listKey == "capability_checks" && capabilityCheckIndex >= 0 && indent > capabilityCheckItemIndent {
+			if item, ok := strings.CutPrefix(trimmed, "- "); ok {
+				if err := applyCapabilityCheckListItem(&opts.NodesCapabilityChecks[capabilityCheckIndex], capabilityCheckListKey, strings.TrimSpace(item)); err != nil {
+					return fmt.Errorf("line %d: %w", lineNumber+1, err)
+				}
+				continue
+			}
+			key, value, ok := strings.Cut(trimmed, ":")
+			if !ok {
+				return fmt.Errorf("line %d: expected key: value", lineNumber+1)
+			}
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if value == "" {
+				capabilityCheckListKey = key
+				continue
+			}
+			capabilityCheckListKey = ""
+			if err := applyCapabilityCheckValue(&opts.NodesCapabilityChecks[capabilityCheckIndex], key, value); err != nil {
+				return fmt.Errorf("line %d: %w", lineNumber+1, err)
+			}
+			continue
+		}
 		if item, ok := strings.CutPrefix(trimmed, "- "); ok {
+			if section == "nodes" && listKey == "capability_checks" {
+				check, err := newCapabilityCheckFromListItem(strings.TrimSpace(item))
+				if err != nil {
+					return fmt.Errorf("line %d: %w", lineNumber+1, err)
+				}
+				opts.NodesCapabilityChecks = append(opts.NodesCapabilityChecks, check)
+				capabilityCheckIndex = len(opts.NodesCapabilityChecks) - 1
+				capabilityCheckItemIndent = indent
+				capabilityCheckListKey = ""
+				continue
+			}
 			if err := applyConfigListItem(section, listKey, strings.TrimSpace(item), opts); err != nil {
 				return fmt.Errorf("line %d: %w", lineNumber+1, err)
 			}
@@ -54,23 +97,38 @@ func applyConfig(content []byte, opts *Options) error {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+		if section == "nodes" && indent == 2 && value == "" && (key == "health" || key == "capability") {
+			subsection = key
+			listKey = ""
+			capabilityCheckIndex = -1
+			capabilityCheckItemIndent = -1
+			capabilityCheckListKey = ""
+			continue
+		}
+		if section == "nodes" && indent <= 2 {
+			subsection = ""
+		}
 		if value == "" {
-			listKey = key
-			switch section {
-			case "session":
-				if key == "health_urls" || key == "health-urls" {
-					opts.HealthURLs = nil
-					opts.SessionHealthURLs = nil
-				}
-			case "nodes":
-				if key == "health_urls" || key == "health-urls" {
-					opts.NodesHealthURLs = nil
-				}
+			listKey = configListKey(section, subsection, key)
+			capabilityCheckIndex = -1
+			capabilityCheckItemIndent = -1
+			capabilityCheckListKey = ""
+			switch {
+			case section == "session" && listKey == "health_urls":
+				opts.HealthURLs = nil
+				opts.SessionHealthURLs = nil
+			case section == "nodes" && listKey == "health_urls":
+				opts.NodesHealthURLs = nil
+			case section == "nodes" && listKey == "capability_checks":
+				opts.NodesCapabilityChecks = nil
 			}
 			continue
 		}
 		listKey = ""
-		if err := applyConfigValue(section, key, value, opts); err != nil {
+		capabilityCheckIndex = -1
+		capabilityCheckItemIndent = -1
+		capabilityCheckListKey = ""
+		if err := applyConfigValue(section, subsection, key, value, opts); err != nil {
 			return fmt.Errorf("line %d: %w", lineNumber+1, err)
 		}
 	}
@@ -81,7 +139,86 @@ func isTopLevelConfigKey(line string) bool {
 	return strings.TrimLeft(line, " \t") == line
 }
 
-func applyConfigValue(section, key, value string, opts *Options) error {
+func configIndent(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
+func configListKey(section, subsection, key string) string {
+	switch section {
+	case "session":
+		if key == "health_urls" || key == "health-urls" {
+			return "health_urls"
+		}
+	case "nodes":
+		switch {
+		case subsection == "health" && (key == "urls" || key == "health_urls" || key == "health-urls"):
+			return "health_urls"
+		case subsection == "capability" && (key == "checks" || key == "capability_checks" || key == "capability-checks"):
+			return "capability_checks"
+		case key == "health_urls" || key == "health-urls":
+			return "health_urls"
+		case key == "capability_checks" || key == "capability-checks":
+			return "capability_checks"
+		}
+	}
+	return key
+}
+
+func newCapabilityCheckFromListItem(item string) (CapabilityCheck, error) {
+	var check CapabilityCheck
+	key, value, ok := strings.Cut(item, ":")
+	if !ok {
+		return CapabilityCheck{}, fmt.Errorf("capability check item must start with name: value")
+	}
+	if err := applyCapabilityCheckValue(&check, strings.TrimSpace(key), strings.TrimSpace(value)); err != nil {
+		return CapabilityCheck{}, err
+	}
+	return check, nil
+}
+
+func applyCapabilityCheckValue(check *CapabilityCheck, key, value string) error {
+	switch key {
+	case "name":
+		check.Name = cleanConfigString(value)
+	case "url":
+		check.URL = cleanConfigString(value)
+	default:
+		return fmt.Errorf("unknown capability check key %q", key)
+	}
+	return nil
+}
+
+func applyCapabilityCheckListItem(check *CapabilityCheck, key, value string) error {
+	switch key {
+	case "pass_status", "pass-status":
+		status, err := parseCapabilityStatus(value, key)
+		if err != nil {
+			return err
+		}
+		check.PassStatus = append(check.PassStatus, status)
+	case "fail_status", "fail-status":
+		status, err := parseCapabilityStatus(value, key)
+		if err != nil {
+			return err
+		}
+		check.FailStatus = append(check.FailStatus, status)
+	case "fail_body_contains", "fail-body-contains":
+		check.FailBodyContains = append(check.FailBodyContains, cleanConfigString(value))
+	default:
+		return fmt.Errorf("unknown capability check list key %q", key)
+	}
+	return nil
+}
+
+func parseCapabilityStatus(value, key string) (int, error) {
+	status, err := strconv.Atoi(cleanConfigString(value))
+	if err != nil || status < 100 || status > 599 {
+		return 0, fmt.Errorf("%s must contain HTTP status codes", key)
+	}
+	return status, nil
+}
+
+func applyConfigValue(section, subsection, key, value string, opts *Options) error {
 	switch section {
 	case "mihomo":
 		return applyMihomoConfig(key, value, opts)
@@ -94,7 +231,14 @@ func applyConfigValue(section, key, value string, opts *Options) error {
 	case "session":
 		return applySessionConfig(key, value, opts)
 	case "nodes":
-		return applyNodesConfig(key, value, opts)
+		switch subsection {
+		case "health":
+			return applyNodesHealthConfig(key, value, opts)
+		case "capability":
+			return applyNodesCapabilityConfig(key, value, opts)
+		default:
+			return applyNodesConfig(key, value, opts)
+		}
 	default:
 		return nil
 	}
@@ -236,6 +380,58 @@ func applySessionConfig(key, value string, opts *Options) error {
 	return nil
 }
 
+func applyNodesHealthConfig(key, value string, opts *Options) error {
+	switch key {
+	case "url", "health_url", "health-url":
+		opts.NodesHealthURLs = []string{cleanConfigString(value)}
+		return nil
+	case "urls", "health_urls", "health-urls":
+		if cleanConfigString(value) == "[]" {
+			opts.NodesHealthURLs = []string{}
+		}
+		return nil
+	}
+
+	if key == "probe_interval_ms" || key == "probe-interval-ms" {
+		intervalMS, err := strconv.Atoi(cleanConfigString(value))
+		if err != nil || intervalMS < 0 {
+			return fmt.Errorf("%s must be zero or a positive integer", key)
+		}
+		opts.NodeProbeIntervalMS = intervalMS
+		return nil
+	}
+
+	intValue, ok, err := parsePositiveConfigInt(key, value)
+	if err != nil || !ok {
+		return err
+	}
+	switch key {
+	case "concurrency":
+		opts.NodesConcurrency = intValue
+	case "probe_rounds", "probe-rounds":
+		opts.NodeProbeRounds = intValue
+	}
+	return nil
+}
+
+func applyNodesCapabilityConfig(key, value string, opts *Options) error {
+	switch key {
+	case "checks", "capability_checks", "capability-checks":
+		if cleanConfigString(value) == "[]" {
+			opts.NodesCapabilityChecks = []CapabilityCheck{}
+		}
+		return nil
+	case "concurrency":
+		concurrency, err := strconv.Atoi(cleanConfigString(value))
+		if err != nil || concurrency <= 0 {
+			return fmt.Errorf("%s must be a positive integer", key)
+		}
+		opts.NodesCapabilityConcurrency = concurrency
+		return nil
+	}
+	return nil
+}
+
 func applyNodesConfig(key, value string, opts *Options) error {
 	switch key {
 	case "show_unhealthy", "show-unhealthy":
@@ -265,6 +461,11 @@ func applyNodesConfig(key, value string, opts *Options) error {
 	case "health_urls", "health-urls":
 		if cleanConfigString(value) == "[]" {
 			opts.NodesHealthURLs = []string{}
+		}
+		return nil
+	case "capability_checks", "capability-checks":
+		if cleanConfigString(value) == "[]" {
+			opts.NodesCapabilityChecks = []CapabilityCheck{}
 		}
 		return nil
 	}

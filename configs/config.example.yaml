@@ -65,21 +65,38 @@ session:
 
 # nodes 命令测速配置。
 nodes:
-  # ./browsebox nodes 默认测速 URL，用于选出访问 ChatGPT 延迟最低的节点。
-  health_urls:
-    - https://chatgpt.com/cdn-cgi/trace
-    #- https://api.openai.com
-  # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 当前组切到健康均值最低的节点。
+  # 为 true 时 ./browsebox nodes 会把主 Clash/mihomo 当前组切到延迟最低的 ok 节点。
   select_fastest: true
-  # 并发测速数量，过高可能让控制器或出口节点不稳定。
-  concurrency: 64
-  # 每个节点、每个 URL 测几轮。
-  probe_rounds: 2
-  # 同一个节点每轮之间隔时间，单位毫秒；0 表示不额外等待。
-  probe_interval_ms: 300
-  # 单个节点测速超时，单位毫秒。
+  # 单个节点测速和 capability HTTP 检测超时，单位毫秒。
   delay_timeout_ms: 5000
-  # 是否展示 unhealthy 节点；false 时只展示健康节点。
+  # 是否展示 failed / unhealthy 节点；false 时只展示 ok 节点。
   show_unhealthy: false
   # 是否用颜色标记当前节点；当前节点被过滤时，则不会显示。
   highlight_current: true
+  # 第一阶段：health 只做延迟/基础连通性检测；通过的节点会进入 capability 阶段，失败的节点直接标记为 unhealthy。
+  health:
+    # ./browsebox nodes 默认测速 URL，用于计算平均延迟。
+    urls:
+      - https://chatgpt.com/cdn-cgi/trace
+      #- https://api.openai.com/v1/models
+    # health 阶段并发测速数量；一个 worker 完成当前节点后会继续领取下一个节点。
+    concurrency: 64
+    # 每个节点、每个 URL 测几轮。
+    probe_rounds: 2
+    # 同一个节点每轮之间隔时间，单位毫秒；0 表示不额外等待。
+    probe_interval_ms: 300
+  # 第二阶段：capability 只检测 health 通过的节点；全部 checks 通过才会显示为 ok，任一失败则显示为 failed。
+  capability:
+    # capability HTTP 检测 worker 数；每个 worker 使用独立临时 mihomo，避免 selector 并发切换串线。
+    concurrency: 8
+    # 真实 HTTP 能力检测；全部规则通过时节点才会在 nodes 输出中显示为 ok。
+    # 示例中 OpenAI /v1/models 不带 token 返回 401 代表 API 入口可达；403 或命中 unsupported_country_region_territory 代表不可用。
+    checks:
+      - name: openai
+        url: https://api.openai.com/v1/models
+        pass_status:
+          - 401
+        fail_status:
+          - 403
+        fail_body_contains:
+          - unsupported_country_region_territory
