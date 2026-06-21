@@ -109,11 +109,14 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 	opts := app.DefaultOptions()
 	flags := newFlagSet("browsebox nodes", &opts)
 
-	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--probe-rounds", "5", "--probe-interval-ms", "250", "--delay-timeout-ms", "2500", "--select-fastest", "--show-unhealthy=true", "--highlight-current=false", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--interface-name", "en0", "--headless"}); err != nil {
+	if err := flags.Parse([]string{"--nodes-concurrency", "32", "--capability-concurrency", "6", "--probe-rounds", "5", "--probe-interval-ms", "250", "--delay-timeout-ms", "2500", "--select-fastest", "--show-unhealthy=true", "--highlight-current=false", "--runtime-cache-dir", "/tmp/cache", "--chrome-profile-dir", "/tmp/profile", "--interface-name", "en0", "--headless"}); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 	if opts.NodesConcurrency != 32 {
 		t.Fatalf("NodesConcurrency = %d, want 32", opts.NodesConcurrency)
+	}
+	if opts.NodesCapabilityConcurrency != 6 {
+		t.Fatalf("NodesCapabilityConcurrency = %d, want 6", opts.NodesCapabilityConcurrency)
 	}
 	if opts.NodeProbeRounds != 5 {
 		t.Fatalf("NodeProbeRounds = %d, want 5", opts.NodeProbeRounds)
@@ -149,7 +152,7 @@ func TestNodeTuningFlagsParse(t *testing.T) {
 
 func TestCommandFlagsOverrideConfigNodeProbeTuning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("nodes:\n  concurrency: 8\n  probe_rounds: 5\n  probe_interval_ms: 250\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("nodes:\n  health:\n    concurrency: 8\n    probe_rounds: 5\n    probe_interval_ms: 250\n  capability:\n    concurrency: 4\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := app.DefaultOptions()
@@ -158,12 +161,15 @@ func TestCommandFlagsOverrideConfigNodeProbeTuning(t *testing.T) {
 	}
 
 	flags := newFlagSet("browsebox nodes", &opts)
-	if err := flags.Parse([]string{"--nodes-concurrency", "12", "--probe-rounds", "2", "--probe-interval-ms", "50"}); err != nil {
+	if err := flags.Parse([]string{"--nodes-concurrency", "12", "--capability-concurrency", "9", "--probe-rounds", "2", "--probe-interval-ms", "50"}); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
 	if opts.NodesConcurrency != 12 {
 		t.Fatalf("NodesConcurrency = %d, want CLI override 12", opts.NodesConcurrency)
+	}
+	if opts.NodesCapabilityConcurrency != 9 {
+		t.Fatalf("NodesCapabilityConcurrency = %d, want CLI override 9", opts.NodesCapabilityConcurrency)
 	}
 	if opts.NodeProbeRounds != 2 {
 		t.Fatalf("NodeProbeRounds = %d, want CLI override 2", opts.NodeProbeRounds)

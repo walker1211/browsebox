@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,10 +148,12 @@ var (
 		}
 		return processInfo{PID: pid, Owner: fields[0], Command: strings.TrimSpace(strings.TrimPrefix(line, fields[0]))}, nil
 	}
-	signalProcess       = defaultSignalProcess
-	processAlive        = defaultProcessAlive
-	checkLocalPorts     = ensureLocalPortsAvailable
-	currentProcessOwner = func() (string, error) {
+	signalProcess           = defaultSignalProcess
+	processAlive            = defaultProcessAlive
+	checkLocalPorts         = ensureLocalPortsAvailable
+	startCapabilityProxy    = startProxy
+	newCapabilityHTTPClient = capabilityHTTPClient
+	currentProcessOwner     = func() (string, error) {
 		return strconv.Itoa(os.Geteuid()), nil
 	}
 )
@@ -257,7 +261,17 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 	}
 
 	targetURLs := nodeProbeURLs(opts)
-	results := collectNodeDelays(ctx, client, group.All, targetURLs, opts.NodeProbeRounds, opts.NodeProbeIntervalMS, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	var results []nodeDelayResult
+	if len(opts.NodesCapabilityChecks) > 0 {
+		capabilityOpts := opts
+		capabilityOpts.Group = groupName
+		results, err = collectNodeDelaysWithCapabilities(ctx, client, capabilityOpts, group.All, targetURLs)
+		if err != nil {
+			return err
+		}
+	} else {
+		results = collectNodeDelays(ctx, client, group.All, targetURLs, opts.NodeProbeRounds, opts.NodeProbeIntervalMS, opts.NodesConcurrency, opts.DelayTimeoutMS)
+	}
 	sortNodeDelayResults(results)
 	displayResults := filterNodeDelayResults(results, opts.ShowUnhealthyNodes)
 	outputOptions := nodeDelayOutputOptions{
@@ -278,7 +292,7 @@ func (a *App) Nodes(ctx context.Context, opts Options) error {
 
 func (a *App) selectFastestNode(ctx context.Context, client *mihomo.Client, group string, results []nodeDelayResult) error {
 	for _, result := range results {
-		if !result.healthy {
+		if !result.healthy || !result.capabilityOK {
 			continue
 		}
 		selectCtx, cancelSelect := context.WithTimeout(ctx, selectNodeTimeout)
@@ -294,15 +308,20 @@ func (a *App) selectFastestNode(ctx context.Context, client *mihomo.Client, grou
 }
 
 type nodeDelayResult struct {
-	index   int
-	name    string
-	delay   int
-	healthy bool
+	index        int
+	name         string
+	delay        int
+	healthy      bool
+	capabilityOK bool
+	checks       string
 }
 
 func validateNodeTuning(opts Options) error {
 	if opts.NodesConcurrency <= 0 {
 		return errors.New("--nodes-concurrency must be a positive integer")
+	}
+	if opts.NodesCapabilityConcurrency <= 0 {
+		return errors.New("--capability-concurrency must be a positive integer")
 	}
 	if opts.NodeProbeRounds <= 0 {
 		return errors.New("--probe-rounds must be a positive integer")
@@ -564,6 +583,65 @@ func collectNodeDelays(ctx context.Context, client *mihomo.Client, nodes []strin
 	return results
 }
 
+func collectNodeDelaysWithCapabilities(ctx context.Context, client *mihomo.Client, opts Options, nodes []string, targetURLs []string) ([]nodeDelayResult, error) {
+	results := make([]nodeDelayResult, len(nodes))
+	if len(nodes) == 0 {
+		return results, nil
+	}
+
+	probeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	healthyJobs := make(chan int)
+	capabilityDone := make(chan error, 1)
+	go func() {
+		err := probeNodeCapabilitiesFrom(probeCtx, opts, results, healthyJobs)
+		if err != nil {
+			cancel()
+		}
+		capabilityDone <- err
+	}()
+
+	healthJobs := make(chan int)
+	var wg sync.WaitGroup
+	workerCount := min(opts.NodesConcurrency, len(nodes))
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range healthJobs {
+				result := checkNodeDelay(probeCtx, client, index, nodes[index], targetURLs, opts.NodeProbeRounds, opts.NodeProbeIntervalMS, opts.DelayTimeoutMS)
+				results[index] = result
+				if !result.healthy {
+					continue
+				}
+				select {
+				case healthyJobs <- index:
+				case <-probeCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+sendJobs:
+	for index := range nodes {
+		select {
+		case healthJobs <- index:
+		case <-probeCtx.Done():
+			break sendJobs
+		}
+	}
+	close(healthJobs)
+	wg.Wait()
+	close(healthyJobs)
+
+	if err := <-capabilityDone; err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node string, targetURLs []string, probeRounds, probeIntervalMS, timeoutMS int) nodeDelayResult {
 	result := nodeDelayResult{index: index, name: node}
 	var totalDelay int
@@ -583,6 +661,7 @@ func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node 
 			delay, err := client.Delay(delayCtx, node, targetURL, timeoutMS)
 			cancelDelay()
 			if err != nil || delay.Error != "" {
+				result.checks = "health:unavailable"
 				return result
 			}
 			totalDelay += delay.Delay
@@ -594,6 +673,8 @@ func checkNodeDelay(ctx context.Context, client *mihomo.Client, index int, node 
 	}
 	result.delay = totalDelay / probeCount
 	result.healthy = true
+	result.capabilityOK = true
+	result.checks = "-"
 	return result
 }
 
@@ -603,14 +684,26 @@ func nodeDelayContextTimeout(timeoutMS int) time.Duration {
 
 func sortNodeDelayResults(results []nodeDelayResult) {
 	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].healthy != results[j].healthy {
-			return results[i].healthy
+		leftRank := nodeDelayStatusRank(results[i])
+		rightRank := nodeDelayStatusRank(results[j])
+		if leftRank != rightRank {
+			return leftRank < rightRank
 		}
-		if results[i].healthy && results[i].delay != results[j].delay {
+		if results[i].healthy && results[j].healthy && results[i].delay != results[j].delay {
 			return results[i].delay < results[j].delay
 		}
 		return results[i].index < results[j].index
 	})
+}
+
+func nodeDelayStatusRank(result nodeDelayResult) int {
+	if !result.healthy {
+		return 2
+	}
+	if !result.capabilityOK {
+		return 1
+	}
+	return 0
 }
 
 func filterNodeDelayResults(results []nodeDelayResult, showUnhealthy bool) []nodeDelayResult {
@@ -619,7 +712,7 @@ func filterNodeDelayResults(results []nodeDelayResult, showUnhealthy bool) []nod
 	}
 	filtered := make([]nodeDelayResult, 0, len(results))
 	for _, result := range results {
-		if result.healthy {
+		if result.healthy && result.capabilityOK {
 			filtered = append(filtered, result)
 		}
 	}
@@ -629,7 +722,7 @@ func filterNodeDelayResults(results []nodeDelayResult, showUnhealthy bool) []nod
 func countHealthyNodeDelayResults(results []nodeDelayResult) int {
 	healthy := 0
 	for _, result := range results {
-		if result.healthy {
+		if result.healthy && result.capabilityOK {
 			healthy++
 		}
 	}
@@ -652,6 +745,7 @@ type nodeDelayRow struct {
 	node      string
 	status    string
 	delay     string
+	checks    string
 	highlight bool
 }
 
@@ -660,7 +754,7 @@ func writeNodeDelayResults(w io.Writer, results []nodeDelayResult, options nodeD
 		return err
 	}
 	rows := make([]nodeDelayRow, 0, len(results)+1)
-	rows = append(rows, nodeDelayRow{node: "NODE", status: "STATUS", delay: "DELAY"})
+	rows = append(rows, nodeDelayRow{node: "NODE", status: "STATUS", delay: "DELAY", checks: "CHECKS"})
 	for _, result := range results {
 		rows = append(rows, nodeDelayResultRow(result, options.currentNode, options.highlightCurrent))
 	}
@@ -670,33 +764,279 @@ func writeNodeDelayResults(w io.Writer, results []nodeDelayResult, options nodeD
 func nodeDelayResultRow(result nodeDelayResult, currentNode string, highlightCurrent bool) nodeDelayRow {
 	row := nodeDelayRow{
 		node:      sanitizeDisplayName(result.name),
+		checks:    result.checks,
 		highlight: highlightCurrent && currentNode != "" && result.name == currentNode,
+	}
+	if row.checks == "" {
+		row.checks = "-"
 	}
 	if !result.healthy {
 		row.status = "unhealthy"
 		row.delay = "-"
 		return row
 	}
-	row.status = "ok"
 	row.delay = fmt.Sprintf("%dms", result.delay)
+	if !result.capabilityOK {
+		row.status = "failed"
+		return row
+	}
+	row.status = "ok"
 	return row
+}
+
+func defaultProbeNodeCapabilities(ctx context.Context, opts Options, results []nodeDelayResult) ([]nodeDelayResult, error) {
+	healthyIndexes := healthyNodeDelayIndexes(results)
+	if len(healthyIndexes) == 0 {
+		return results, nil
+	}
+
+	workerCount := min(opts.NodesCapabilityConcurrency, len(healthyIndexes))
+	workers := make([]capabilityProbeWorker, 0, workerCount)
+	for workerIndex := range workerCount {
+		worker, err := startCapabilityProbeWorker(ctx, opts, results[healthyIndexes[0]].name, workerIndex)
+		if err != nil {
+			stopCapabilityProbeWorkers(workers)
+			return nil, err
+		}
+		workers = append(workers, worker)
+	}
+	defer stopCapabilityProbeWorkers(workers)
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for _, worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for resultIndex := range jobs {
+				probeNodeCapabilityWithWorker(ctx, worker, &results[resultIndex], opts.NodesCapabilityChecks)
+			}
+		}()
+	}
+	for _, resultIndex := range healthyIndexes {
+		jobs <- resultIndex
+	}
+	close(jobs)
+	wg.Wait()
+
+	return results, nil
+}
+
+func healthyNodeDelayIndexes(results []nodeDelayResult) []int {
+	indexes := make([]int, 0, len(results))
+	for index, result := range results {
+		if result.healthy {
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
+}
+
+func probeNodeCapabilitiesFrom(ctx context.Context, opts Options, results []nodeDelayResult, healthyIndexes <-chan int) error {
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	workers := make([]capabilityProbeWorker, 0, opts.NodesCapabilityConcurrency)
+	defer func() {
+		close(jobs)
+		wg.Wait()
+		stopCapabilityProbeWorkers(workers)
+	}()
+
+	startWorker := func(firstHealthy string) error {
+		worker, err := startCapabilityProbeWorker(ctx, opts, firstHealthy, len(workers))
+		if err != nil {
+			return err
+		}
+		workers = append(workers, worker)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for resultIndex := range jobs {
+				probeNodeCapabilityWithWorker(ctx, worker, &results[resultIndex], opts.NodesCapabilityChecks)
+			}
+		}()
+		return nil
+	}
+
+	for resultIndex := range healthyIndexes {
+		if len(workers) < opts.NodesCapabilityConcurrency {
+			if err := startWorker(results[resultIndex].name); err != nil {
+				if isCapabilityBootstrapSelectError(err) {
+					results[resultIndex].capabilityOK = false
+					results[resultIndex].checks = "proxy:select_error"
+					continue
+				}
+				return err
+			}
+		}
+		select {
+		case jobs <- resultIndex:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func isCapabilityBootstrapSelectError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "select temp node")
+}
+
+type capabilityProbeWorker struct {
+	opts    Options
+	started startedProxy
+	client  *mihomo.Client
+}
+
+func startCapabilityProbeWorker(ctx context.Context, opts Options, firstHealthy string, workerIndex int) (capabilityProbeWorker, error) {
+	probeOpts := capabilityProbeWorkerOptions(opts, firstHealthy, workerIndex)
+	started, err := startCapabilityProxy(ctx, ctx, probeOpts)
+	if err != nil {
+		return capabilityProbeWorker{}, fmt.Errorf("start capability proxy: %w", err)
+	}
+	return capabilityProbeWorker{
+		opts:    probeOpts,
+		started: started,
+		client:  mihomo.NewTCPClient(started.controllerURL),
+	}, nil
+}
+
+func capabilityProbeWorkerOptions(opts Options, firstHealthy string, workerIndex int) Options {
+	probeOpts := opts
+	probeOpts.DefaultNode = firstHealthy
+	probeOpts.SelectFastest = false
+	probeOpts.HealthURLs = nil
+	stride := capabilityProbePortStride(opts)
+	probeOpts.ProxyPort = opts.ProxyPort + workerIndex*stride
+	probeOpts.ControllerPort = opts.ControllerPort + workerIndex*stride
+	return probeOpts
+}
+
+func capabilityProbePortStride(opts Options) int {
+	diff := opts.ProxyPort - opts.ControllerPort
+	if diff < 0 {
+		diff = -diff
+	}
+	return max(diff+1, 2)
+}
+
+func stopCapabilityProbeWorkers(workers []capabilityProbeWorker) {
+	for _, worker := range workers {
+		stopProcess(worker.started.mihomoProcess)
+		if !worker.opts.Keep {
+			_ = os.RemoveAll(worker.started.session.RuntimeDir)
+		}
+	}
+}
+
+func probeNodeCapabilityWithWorker(ctx context.Context, worker capabilityProbeWorker, result *nodeDelayResult, checks []CapabilityCheck) {
+	selectCtx, cancelSelect := context.WithTimeout(ctx, selectNodeTimeout)
+	selectErr := worker.client.SelectNode(selectCtx, worker.opts.Group, result.name)
+	cancelSelect()
+	if selectErr != nil {
+		result.capabilityOK = false
+		result.checks = "proxy:select_error"
+		return
+	}
+	httpClient := newCapabilityHTTPClient(worker.opts.ProxyPort, worker.opts.DelayTimeoutMS)
+	defer closeCapabilityHTTPClient(httpClient)
+	failures := evaluateCapabilityChecks(ctx, httpClient, checks)
+	if len(failures) == 0 {
+		result.capabilityOK = true
+		result.checks = "-"
+		return
+	}
+	result.capabilityOK = false
+	result.checks = strings.Join(failures, "; ")
+}
+
+func capabilityHTTPClient(proxyPort, timeoutMS int) *http.Client {
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
+	return &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   nodeDelayContextTimeout(timeoutMS),
+	}
+}
+
+func closeCapabilityHTTPClient(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	if transport, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
+}
+
+func evaluateCapabilityChecks(ctx context.Context, client *http.Client, checks []CapabilityCheck) []string {
+	var failures []string
+	for index, check := range checks {
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			name = fmt.Sprintf("check%d", index+1)
+		}
+		if reason := evaluateCapabilityCheck(ctx, client, check); reason != "" {
+			failures = append(failures, fmt.Sprintf("%s:%s", sanitizeDisplayName(name), reason))
+		}
+	}
+	return failures
+}
+
+func evaluateCapabilityCheck(ctx context.Context, client *http.Client, check CapabilityCheck) string {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(check.URL), nil)
+	if err != nil {
+		return "bad_url"
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		return "request_error"
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	bodyLower := strings.ToLower(string(body))
+	for _, marker := range check.FailBodyContains {
+		cleaned := cleanConfigString(marker)
+		if cleaned == "" {
+			continue
+		}
+		if strings.Contains(bodyLower, strings.ToLower(cleaned)) {
+			return compactCapabilityReason(cleaned)
+		}
+	}
+	if slices.Contains(check.FailStatus, response.StatusCode) {
+		return strconv.Itoa(response.StatusCode)
+	}
+	if len(check.PassStatus) > 0 && !slices.Contains(check.PassStatus, response.StatusCode) {
+		return strconv.Itoa(response.StatusCode)
+	}
+	return ""
+}
+
+func compactCapabilityReason(reason string) string {
+	return strings.Join(strings.Fields(reason), "_")
 }
 
 func writeFixedWidthRows(w io.Writer, rows []nodeDelayRow) error {
 	nodeWidth := 0
 	statusWidth := 0
+	delayWidth := 0
 	for _, row := range rows {
 		nodeWidth = max(nodeWidth, displayWidth(row.node))
 		statusWidth = max(statusWidth, displayWidth(row.status))
+		delayWidth = max(delayWidth, displayWidth(row.delay))
 	}
 	for _, row := range rows {
 		line := fmt.Sprintf(
-			"%s%s  %s%s  %s",
+			"%s%s  %s%s  %s%s  %s",
 			row.node,
 			spacesForDisplayWidth(nodeWidth-displayWidth(row.node)),
 			row.status,
 			spacesForDisplayWidth(statusWidth-displayWidth(row.status)),
 			row.delay,
+			spacesForDisplayWidth(delayWidth-displayWidth(row.delay)),
+			row.checks,
 		)
 		if row.highlight {
 			line = currentNodeRowColor + line + ansiReset

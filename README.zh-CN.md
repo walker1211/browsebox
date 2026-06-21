@@ -76,7 +76,7 @@ go run ./cmd/browsebox --help
 ./browsebox groups
 ```
 
-并发检测节点延迟；默认隐藏 unhealthy 节点，健康节点按延迟从低到高排序；使用 `--show-unhealthy=true` 时，unhealthy 节点会显示在健康节点之后：
+并发检测节点延迟。`nodes.health.urls` 用于计算平均延迟；可选的 `nodes.capability.checks` 会执行真实 HTTP 能力检测。默认只显示 `ok` 节点并按延迟从低到高排序；使用 `--show-unhealthy=true` 时，会在 `ok` 之后显示 capability 失败的 `failed` 节点和延迟检查失败的 `unhealthy` 节点：
 
 ```bash
 ./browsebox nodes
@@ -88,7 +88,7 @@ go run ./cmd/browsebox --help
 ./browsebox nodes --group "<group>"
 ```
 
-显式切换主 Clash/mihomo 选择器到当前测速中延迟最低的健康节点：
+显式切换主 Clash/mihomo 选择器到当前检测中延迟最低的 `ok` 节点：
 
 ```bash
 ./browsebox nodes --url "https://chatgpt.com" --select-fastest
@@ -169,12 +169,17 @@ cp configs/config.example.yaml configs/config.yaml
 - `browser.chrome_args`：额外 Chrome 启动参数配置；使用 block list 或 `[]`，每项可以带或不带开头的 `--`，会保留顺序并按参数名去重。`user-data-dir`、`proxy-server`、`remote-debugging-port` 由 browsebox 管理，配置中同名参数会被忽略。
 - `--headless`：以无头模式启动 Chrome，适合 browser-mcp / CDP 自动化；默认可视化启动。
 - `--proxy-port <port>`、`--controller-port <port>`、`--devtools-port <port>`：本机会话端口。
-- `--nodes-concurrency <n>`：`nodes` 并发测速数量，默认 16。
-- `--delay-timeout-ms <ms>`：mihomo 延迟检查超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。
-- `--show-unhealthy=true|false`：`nodes` 是否展示 unhealthy 节点，默认 `false`，只展示可用节点。
-- `--highlight-current=true|false`：`nodes` 是否用颜色标记当前节点，默认 `true`；如果当前节点被过滤则不会显示。
+- `--nodes-concurrency <n>` / `nodes.health.concurrency`：`nodes` health 阶段并发测速 worker 数，默认 16；worker 完成当前节点后会继续领取下一个节点。
+- `nodes.health.urls`：`./browsebox nodes` 用于计算平均延迟的测速 URL 数组；health 失败的节点会标记为 `unhealthy`，不会进入 capability 检测。
+- `nodes.health.probe_rounds`：每个节点、每个测速 URL 的测速轮数。
+- `nodes.health.probe_interval_ms`：同一个节点每轮测速之间的间隔时间，单位毫秒。
+- `--delay-timeout-ms <ms>` / `nodes.delay_timeout_ms`：节点延迟检查和 capability HTTP 检测的公共超时，默认 5000ms，也用于 `run` / `start` 的启动健康检查。
+- `--capability-concurrency <n>` / `nodes.capability.concurrency`：capability HTTP 检测 worker 数；单个节点通过 health 后会立即进入 capability 队列，每个 worker 使用独立临时 mihomo，避免 selector 并发切换串线。
+- `nodes.capability.checks`：`./browsebox nodes` 可选的真实 HTTP 能力检测数组。`STATUS=ok` 表示 health 通过且所有 capability 规则都通过；`STATUS=failed` 表示 health 通过但至少一个 capability 规则失败。`CHECKS` 在 ok 行显示 `-`，失败行显示类似 `openai:unsupported_country_region_territory` 的简短原因。
+- `--show-unhealthy=true|false` / `nodes.show_unhealthy`：`nodes` 是否展示非 ok 节点，默认 `false`，只展示可用节点。
+- `--highlight-current=true|false` / `nodes.highlight_current`：`nodes` 是否用颜色标记当前节点，默认 `true`；如果当前节点被过滤则不会显示。
 - `--group <group>` / `session.group`：代理组名；留空时自动匹配当前 Clash/mihomo 选择的代理组，无法唯一匹配时需要显式指定。
-- `--select-fastest`：仅用于显式 opt-in；`nodes` 测速后把主控制器中选定或自动匹配到的代理组切换到延迟最低的健康节点。
+- `--select-fastest`：仅用于显式 opt-in；`nodes` 完成延迟和 capability 检查后，把主控制器中选定或自动匹配到的代理组切换到延迟最低的 `ok` 节点。
 - `--health-url <url>`：启动 `run` / `start` 前通过临时 mihomo 检查所选节点的 URL，可重复传入；任一检查失败会停止启动并清理临时资源。
 
 ## 本地验证与发布

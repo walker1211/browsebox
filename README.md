@@ -76,7 +76,7 @@ List proxy groups:
 ./browsebox groups
 ```
 
-Check node delays concurrently; unhealthy nodes are hidden by default and healthy nodes are sorted by ascending delay. When `--show-unhealthy=true` is used, unhealthy nodes are shown after healthy nodes:
+Check node delays concurrently. `nodes.health.urls` drives average delay, and optional `nodes.capability.checks` run real HTTP checks; default output shows only `ok` nodes sorted by ascending delay. With `--show-unhealthy=true`, `failed` capability rows and `unhealthy` delay rows are shown after `ok` rows:
 
 ```bash
 ./browsebox nodes
@@ -88,7 +88,7 @@ If browsebox cannot uniquely match the current proxy group, specify it explicitl
 ./browsebox nodes --group "<group>"
 ```
 
-Explicitly switch the main Clash/mihomo selector to the lowest-delay healthy node from the current check:
+Explicitly switch the main Clash/mihomo selector to the lowest-delay `ok` node from the current check:
 
 ```bash
 ./browsebox nodes --url "https://chatgpt.com" --select-fastest
@@ -169,12 +169,17 @@ Common configuration options:
 - `browser.chrome_args`: extra Chrome launch arguments in config; use block-list syntax or `[]`. Entries may include or omit the leading `--`, and duplicate names are ignored after the first occurrence. `user-data-dir`, `proxy-server`, and `remote-debugging-port` are managed by browsebox and ignored if configured.
 - `--headless`: launch Chrome in headless mode for browser-mcp / CDP automation; visible Chrome remains the default.
 - `--proxy-port <port>`, `--controller-port <port>`, `--devtools-port <port>`: localhost session ports.
-- `--nodes-concurrency <n>`: concurrent delay checks for `nodes`, defaulting to 16.
-- `--delay-timeout-ms <ms>`: mihomo delay-check timeout, defaulting to 5000ms; also used by `run` / `start` startup health checks.
-- `--show-unhealthy=true|false`: whether `nodes` shows unhealthy nodes, defaulting to `false` so only available nodes are shown.
-- `--highlight-current=true|false`: whether `nodes` color-highlights the current node, defaulting to `true`; hidden current nodes are not shown separately.
+- `--nodes-concurrency <n>` / `nodes.health.concurrency`: concurrent delay-check workers for `nodes`, defaulting to 16. Each worker takes another node when its current node finishes.
+- `nodes.health.urls`: URLs used by `./browsebox nodes` to calculate average delay. A node that fails health is marked `unhealthy` and does not run capability checks.
+- `nodes.health.probe_rounds`: delay-check rounds per node and health URL.
+- `nodes.health.probe_interval_ms`: delay between delay-check rounds in milliseconds.
+- `--delay-timeout-ms <ms>` / `nodes.delay_timeout_ms`: common timeout for node delay checks and capability HTTP checks, defaulting to 5000ms; also used by `run` / `start` startup health checks.
+- `--capability-concurrency <n>` / `nodes.capability.concurrency`: concurrent capability HTTP check workers. Capability workers start as soon as individual nodes pass health, and each worker uses an independent temporary mihomo instance to avoid selector races.
+- `nodes.capability.checks`: optional array of real HTTP checks for `./browsebox nodes`. `STATUS=ok` means health passed and every capability rule passed; `STATUS=failed` means health passed but at least one capability rule failed. `CHECKS` is `-` for ok rows and compact failure reasons such as `openai:unsupported_country_region_territory` for failed rows.
+- `--show-unhealthy=true|false` / `nodes.show_unhealthy`: whether `nodes` shows non-ok nodes, defaulting to `false` so only available nodes are shown.
+- `--highlight-current=true|false` / `nodes.highlight_current`: whether `nodes` color-highlights the current node, defaulting to `true`; hidden current nodes are not shown separately.
 - `--group <group>` / `session.group`: proxy group name. Leave it empty to auto-match the proxy group currently selected in Clash/mihomo; specify it explicitly if the match is ambiguous.
-- `--select-fastest`: explicit opt-in for `nodes`; after delay checks, switch the selected or auto-matched group in the main controller to the lowest-delay healthy node.
+- `--select-fastest`: explicit opt-in for `nodes`; after delay and capability checks, switch the selected or auto-matched group in the main controller to the lowest-delay `ok` node.
 - `--health-url <url>`: URL checked through the selected node before `run` / `start` launches Chrome; repeat the flag to set multiple URLs. Any failed check stops startup and cleans temporary resources.
 
 ## Local verification and release

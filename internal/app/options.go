@@ -9,40 +9,51 @@ import (
 	"github.com/walker1211/browsebox/internal/mihomo"
 )
 
+// CapabilityCheck describes one HTTP capability rule for node probing.
+type CapabilityCheck struct {
+	Name             string
+	URL              string
+	PassStatus       []int
+	FailStatus       []int
+	FailBodyContains []string
+}
+
 // Options contains browsebox runtime settings parsed by the CLI.
 type Options struct {
-	ControllerSocket     string
-	ControllerURL        string
-	ControllerPipe       string
-	SourceConfigPath     string
-	RuntimeDir           string
-	RuntimeCacheDir      string
-	StateDir             string
-	MihomoBinaryPath     string
-	MihomoInterfaceName  string
-	ChromeBinaryPath     string
-	ChromeProfileDir     string
-	ChromeArgs           []string
-	BrowserHeadless      bool
-	Keep                 bool
-	Group                string
-	DefaultNode          string
-	ProxyPort            int
-	ControllerPort       int
-	DevToolsPort         int
-	TargetURL            string
-	HealthURLs           []string
-	SessionHealthURLs    []string
-	NodesHealthURLs      []string
-	NodesConcurrency     int
-	NodeProbeRounds      int
-	NodeProbeIntervalMS  int
-	DelayTimeoutMS       int
-	SelectFastest        bool
-	SessionSelectFastest bool
-	NodesSelectFastest   bool
-	ShowUnhealthyNodes   bool
-	HighlightCurrentNode bool
+	ControllerSocket           string
+	ControllerURL              string
+	ControllerPipe             string
+	SourceConfigPath           string
+	RuntimeDir                 string
+	RuntimeCacheDir            string
+	StateDir                   string
+	MihomoBinaryPath           string
+	MihomoInterfaceName        string
+	ChromeBinaryPath           string
+	ChromeProfileDir           string
+	ChromeArgs                 []string
+	BrowserHeadless            bool
+	Keep                       bool
+	Group                      string
+	DefaultNode                string
+	ProxyPort                  int
+	ControllerPort             int
+	DevToolsPort               int
+	TargetURL                  string
+	HealthURLs                 []string
+	SessionHealthURLs          []string
+	NodesHealthURLs            []string
+	NodesCapabilityChecks      []CapabilityCheck
+	NodesCapabilityConcurrency int
+	NodesConcurrency           int
+	NodeProbeRounds            int
+	NodeProbeIntervalMS        int
+	DelayTimeoutMS             int
+	SelectFastest              bool
+	SessionSelectFastest       bool
+	NodesSelectFastest         bool
+	ShowUnhealthyNodes         bool
+	HighlightCurrentNode       bool
 }
 
 // DefaultOptions returns safe macOS-oriented defaults for browsebox.
@@ -57,17 +68,18 @@ func DefaultOptions() Options {
 			"no-first-run",
 			"no-default-browser-check",
 		},
-		Group:                "",
-		DefaultNode:          "",
-		ProxyPort:            17997,
-		ControllerPort:       17998,
-		DevToolsPort:         9223,
-		TargetURL:            "https://x.com/OpenAI",
-		NodesConcurrency:     16,
-		NodeProbeRounds:      1,
-		NodeProbeIntervalMS:  0,
-		DelayTimeoutMS:       5000,
-		HighlightCurrentNode: true,
+		Group:                      "",
+		DefaultNode:                "",
+		ProxyPort:                  17997,
+		ControllerPort:             17998,
+		DevToolsPort:               9223,
+		TargetURL:                  "https://x.com/OpenAI",
+		NodesConcurrency:           16,
+		NodesCapabilityConcurrency: 8,
+		NodeProbeRounds:            1,
+		NodeProbeIntervalMS:        0,
+		DelayTimeoutMS:             5000,
+		HighlightCurrentNode:       true,
 		HealthURLs: []string{
 			"https://x.com",
 			"https://abs.twimg.com",
