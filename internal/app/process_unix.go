@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+func signalChildProcess(process *os.Process, sig os.Signal) error {
+	return process.Signal(sig)
+}
+
 func defaultSignalProcess(pid int, sig os.Signal) error {
 	sysSig, ok := sig.(syscall.Signal)
 	if !ok {

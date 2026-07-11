@@ -15,12 +15,16 @@ const (
 )
 
 func defaultSignalProcess(pid int, sig os.Signal) error {
-	if sig != os.Kill && sig != syscall.SIGTERM && sig != syscall.SIGKILL {
-		return syscall.EWINDOWS
-	}
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return err
+	}
+	return signalChildProcess(process, sig)
+}
+
+func signalChildProcess(process *os.Process, sig os.Signal) error {
+	if sig != os.Kill && sig != syscall.SIGTERM && sig != syscall.SIGKILL {
+		return syscall.EWINDOWS
 	}
 	return process.Kill()
 }

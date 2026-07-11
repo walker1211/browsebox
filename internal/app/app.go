@@ -36,6 +36,8 @@ const (
 	processStopTimeout      = 2 * time.Second
 )
 
+var chromeStopTimeout = 15 * time.Second
+
 type process interface {
 	PID() int
 	Signal(os.Signal) error
@@ -68,7 +70,7 @@ func (p cmdProcess) Signal(sig os.Signal) error {
 	if p.cmd.Process == nil {
 		return nil
 	}
-	return p.cmd.Process.Signal(sig)
+	return signalChildProcess(p.cmd.Process, sig)
 }
 
 func (p cmdProcess) Kill() error {
@@ -93,7 +95,7 @@ func (p osProcess) Signal(sig os.Signal) error {
 	if p.process == nil {
 		return nil
 	}
-	return p.process.Signal(sig)
+	return signalChildProcess(p.process, sig)
 }
 
 func (p osProcess) Kill() error {
@@ -1223,18 +1225,18 @@ func (a *App) Run(ctx context.Context, opts Options) error {
 
 	signalCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	childCtx, cancelChildren := context.WithCancel(signalCtx)
-	defer cancelChildren()
 
-	started, err := startSession(childCtx, signalCtx, opts)
+	started, err := startSession(context.WithoutCancel(signalCtx), signalCtx, opts)
 	if err != nil {
 		return err
 	}
-	defer stopProcess(started.chromeProcess)
-	defer stopProcess(started.mihomoProcess)
-	if !opts.Keep {
-		defer os.RemoveAll(started.session.RuntimeDir)
-	}
+	defer func() {
+		stopProcessWithTimeout(started.chromeProcess, chromeStopTimeout)
+		stopProcess(started.mihomoProcess)
+		if !opts.Keep {
+			_ = os.RemoveAll(started.session.RuntimeDir)
+		}
+	}()
 
 	printOpts := opts
 	printOpts.Group = started.session.Group
@@ -1255,17 +1257,17 @@ func (a *App) Proxy(ctx context.Context, opts Options) error {
 
 	signalCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	childCtx, cancelChildren := context.WithCancel(signalCtx)
-	defer cancelChildren()
 
-	started, err := startProxy(childCtx, signalCtx, opts)
+	started, err := startProxy(context.WithoutCancel(signalCtx), signalCtx, opts)
 	if err != nil {
 		return err
 	}
-	defer stopProcess(started.mihomoProcess)
-	if !opts.Keep {
-		defer os.RemoveAll(started.session.RuntimeDir)
-	}
+	defer func() {
+		stopProcess(started.mihomoProcess)
+		if !opts.Keep {
+			_ = os.RemoveAll(started.session.RuntimeDir)
+		}
+	}()
 
 	printOpts := opts
 	printOpts.Group = started.session.Group
@@ -1295,7 +1297,7 @@ func (a *App) Start(ctx context.Context, opts Options) error {
 		return err
 	}
 	if err := state.Save(opts.StateDir, started.session); err != nil {
-		stopProcess(started.chromeProcess)
+		stopProcessWithTimeout(started.chromeProcess, chromeStopTimeout)
 		stopProcess(started.mihomoProcess)
 		if !opts.Keep {
 			_ = os.RemoveAll(started.session.RuntimeDir)
@@ -1834,7 +1836,7 @@ func stopManagedProcess(session state.Session, target managedProcessTarget) erro
 	if err := signalProcess(target.pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("signal %s process %d: %w", target.name, target.pid, err)
 	}
-	deadline := time.Now().Add(processStopTimeout)
+	deadline := time.Now().Add(processStopTimeoutFor(target.name))
 	for time.Now().Before(deadline) {
 		alive, err := processAlive(target.pid)
 		if err != nil {
@@ -1926,6 +1928,10 @@ func validateRuntimeDirForRemoval(session state.Session, stateDir string) error 
 }
 
 func stopProcess(p process) {
+	stopProcessWithTimeout(p, processStopTimeout)
+}
+
+func stopProcessWithTimeout(p process, timeout time.Duration) {
 	if p == nil {
 		return
 	}
@@ -1937,10 +1943,17 @@ func stopProcess(p process) {
 	_ = p.Signal(syscall.SIGTERM)
 	select {
 	case <-done:
-	case <-time.After(processStopTimeout):
+	case <-time.After(timeout):
 		_ = p.Kill()
 		<-done
 	}
+}
+
+func processStopTimeoutFor(name string) time.Duration {
+	if name == "chrome" {
+		return chromeStopTimeout
+	}
+	return processStopTimeout
 }
 
 func sanitizeDisplayName(name string) string {

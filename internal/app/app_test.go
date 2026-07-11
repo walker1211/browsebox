@@ -546,7 +546,9 @@ func TestRunUsesConfiguredChromeProfileDir(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var chromeOpts browser.Options
+	var chromeProcessCtx context.Context
 	startChrome = func(ctx context.Context, chromePath string, opts browser.Options) (process, error) {
+		chromeProcessCtx = ctx
 		chromeOpts = opts
 		cancel()
 		return nopProcess{}, nil
@@ -575,6 +577,9 @@ func TestRunUsesConfiguredChromeProfileDir(t *testing.T) {
 	}
 	if len(chromeOpts.ChromeArgs) != 1 || chromeOpts.ChromeArgs[0] != "disable-background-networking" {
 		t.Fatalf("ChromeArgs = %#v, want configured arg", chromeOpts.ChromeArgs)
+	}
+	if err := chromeProcessCtx.Err(); err != nil {
+		t.Fatalf("Chrome process context was canceled before graceful cleanup: %v", err)
 	}
 }
 
@@ -1354,12 +1359,15 @@ func TestStopRevalidatesIdentityBeforeEscalatingToKill(t *testing.T) {
 	oldSignalProcess := signalProcess
 	oldProcessAlive := processAlive
 	oldCurrentProcessOwner := currentProcessOwner
+	oldChromeStopTimeout := chromeStopTimeout
 	t.Cleanup(func() {
 		inspectProcess = oldInspectProcess
 		signalProcess = oldSignalProcess
 		processAlive = oldProcessAlive
 		currentProcessOwner = oldCurrentProcessOwner
+		chromeStopTimeout = oldChromeStopTimeout
 	})
+	chromeStopTimeout = 25 * time.Millisecond
 	currentProcessOwner = func() (string, error) { return "501", nil }
 	inspectCalls := 0
 	inspectProcess = func(pid int) (processInfo, error) {
