@@ -124,12 +124,14 @@ Stop the persistent session and clean state:
 ./browsebox stop
 ```
 
-Sync the repository-provided browsebox Claude skill into the user-level skill install:
+Keep the repository-provided browsebox skill synchronized for Claude and Codex-compatible agents:
 
 ```bash
 ./skill-sync --check
 ./skill-sync --apply
 ```
+
+The canonical source is `.claude/skills/browsebox`. The generated repository mirror `.agents/skills/browsebox` is tracked for Codex-compatible project discovery; do not edit it directly. `--check` validates that mirror plus the user installs at `~/.claude/skills/browsebox` and `~/.agents/skills/browsebox`. `--apply` stages and updates all three targets.
 
 If installed through `./build.sh install`, use:
 
@@ -137,6 +139,8 @@ If installed through `./build.sh install`, use:
 browsebox-skill-sync --check
 browsebox-skill-sync --apply
 ```
+
+The skill files are not embedded in the binary. Run the installed command inside a browsebox source checkout, or pass `--repo-root <checkout>`.
 
 ## Configuration and default locations
 
