@@ -5,9 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 )
 
-const usageText = `browsebox-skill-sync keeps the local browsebox Claude skill in sync with this repository.
+const usageText = `browsebox-skill-sync keeps the browsebox Claude and Codex skills in sync with this repository.
 
 Usage:
   browsebox-skill-sync [--check] [--repo-root path]
@@ -16,8 +17,8 @@ Usage:
   browsebox-skill-sync --help
 
 Flags:
-  --apply           Copy repository browsebox skill to the local Claude skill install
-  --check           Check whether the local Claude skill install matches the repository source
+  --apply           Sync the repository Codex mirror and local Claude/Codex installs
+  --check           Check all mirrors and installs against the repository source
   --repo-root path  Repository root; defaults to nearest browsebox root
 `
 
@@ -44,8 +45,8 @@ func Run(args []string, ctx CommandContext) int {
 
 	fs := flag.NewFlagSet("skill-sync", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	apply := fs.Bool("apply", false, "copy repository browsebox skill to the local Claude skill install")
-	check := fs.Bool("check", false, "check whether the local Claude skill install matches the repository source")
+	apply := fs.Bool("apply", false, "sync the repository Codex mirror and local Claude/Codex installs")
+	check := fs.Bool("check", false, "check all mirrors and installs against the repository source")
 	repoRootFlag := fs.String("repo-root", "", "repository root; defaults to nearest browsebox root")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -78,6 +79,10 @@ func Run(args []string, ctx CommandContext) int {
 		}
 		repoRoot = found
 	}
+	repoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return printLine(stderr, 1, err.Error())
+	}
 
 	if ctx.UserHomeDir == nil {
 		return printLine(stderr, 2, "home directory lookup is not configured")
@@ -101,6 +106,11 @@ func Run(args []string, ctx CommandContext) int {
 				return 1
 			}
 		}
+		for _, warning := range result.Warnings {
+			if err := writef(stderr, "warning: skill sync succeeded but cleanup was incomplete: %s\n", warning); err != nil {
+				return 1
+			}
+		}
 		return 0
 	}
 
@@ -109,7 +119,7 @@ func Run(args []string, ctx CommandContext) int {
 		return printLine(stderr, 1, err.Error())
 	}
 	if len(result.Drift) > 0 {
-		if err := writeLine(stdout, "skill install is out of sync:"); err != nil {
+		if err := writeLine(stdout, "skill mirrors or installs are out of sync:"); err != nil {
 			return 1
 		}
 		for _, line := range result.Drift {
@@ -119,7 +129,7 @@ func Run(args []string, ctx CommandContext) int {
 		}
 		return 1
 	}
-	return printLine(stdout, 0, "skill install is up to date")
+	return printLine(stdout, 0, "skill mirrors and installs are up to date")
 }
 
 func wantsHelp(args []string) bool {

@@ -124,12 +124,14 @@ go run ./cmd/browsebox --help
 ./browsebox stop
 ```
 
-同步仓库内置的 browsebox Claude skill 到用户级 skill 安装目录：
+让仓库内置的 browsebox skill 同时为 Claude 与 Codex 兼容代理保持同步：
 
 ```bash
 ./skill-sync --check
 ./skill-sync --apply
 ```
+
+唯一权威源是 `.claude/skills/browsebox`。生成的仓库镜像 `.agents/skills/browsebox` 会纳入 Git，供 Codex 兼容的项目级 skill 发现使用，请勿直接编辑。`--check` 会同时校验该镜像以及 `~/.claude/skills/browsebox`、`~/.agents/skills/browsebox` 两个用户级安装目录；`--apply` 会先 staging，再统一更新这三个目标。
 
 如果已经通过 `./build.sh install` 安装，则使用：
 
@@ -137,6 +139,8 @@ go run ./cmd/browsebox --help
 browsebox-skill-sync --check
 browsebox-skill-sync --apply
 ```
+
+skill 文件不会嵌入二进制。使用已安装命令时，需要位于 browsebox 源码 checkout 内，或传入 `--repo-root <checkout>`。
 
 ## 配置与默认位置
 
