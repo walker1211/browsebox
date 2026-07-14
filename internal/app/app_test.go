@@ -239,11 +239,16 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 	oldWriteRuntimeConfig := writeRuntimeConfig
 	oldStartProcess := startMihomoProcess
 	oldStartChrome := startChrome
+	oldLookupDefaultPhysicalInterface := lookupDefaultPhysicalInterface
 	t.Cleanup(func() {
 		writeRuntimeConfig = oldWriteRuntimeConfig
 		startMihomoProcess = oldStartProcess
 		startChrome = oldStartChrome
+		lookupDefaultPhysicalInterface = oldLookupDefaultPhysicalInterface
 	})
+	lookupDefaultPhysicalInterface = func(context.Context) (string, error) {
+		return "en0", nil
+	}
 	writeRuntimeConfig = func(dir string, content []byte) (string, error) {
 		rewritten = string(content)
 		return mihomo.WriteRuntimeConfig(dir, content)
@@ -283,7 +288,7 @@ func TestRunWritesRuntimeConfigSelectsNodeLaunchesChromeAndCleansUp(t *testing.T
 	opts.SourceConfigPath = sourcePath
 	opts.RuntimeDir = runtimeBaseDir
 	opts.MihomoBinaryPath = "/bin/mihomo"
-	opts.MihomoInterfaceName = "en0"
+	opts.MihomoInterfaceName = "auto"
 	opts.ChromeBinaryPath = "/bin/chrome"
 	opts.Group = "All"
 	opts.DefaultNode = "node-a"

@@ -37,7 +37,7 @@ Flags:
   --runtime-cache-dir path  Cache directory for mihomo geodata files
   --state-dir path          Directory for persistent session state
   --mihomo path             Mihomo binary path
-  --interface-name name     Network interface for mihomo outbound dials
+  --interface-name name     Network interface for mihomo outbound dials; "auto" uses the current default physical interface
   --chrome path             Chrome binary path
   --chrome-profile-dir path Chrome profile directory
   --headless                Launch Chrome in headless mode
@@ -229,7 +229,7 @@ func newFlagSet(name string, opts *app.Options) *flag.FlagSet {
 	flags.StringVar(&opts.RuntimeCacheDir, "runtime-cache-dir", opts.RuntimeCacheDir, "cache directory for mihomo geodata files")
 	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for persistent session state")
 	flags.StringVar(&opts.MihomoBinaryPath, "mihomo", opts.MihomoBinaryPath, "mihomo binary path")
-	flags.StringVar(&opts.MihomoInterfaceName, "interface-name", opts.MihomoInterfaceName, "network interface for mihomo outbound dials")
+	flags.StringVar(&opts.MihomoInterfaceName, "interface-name", opts.MihomoInterfaceName, "network interface for mihomo outbound dials; auto uses the current default physical interface")
 	flags.StringVar(&opts.ChromeBinaryPath, "chrome", opts.ChromeBinaryPath, "chrome binary path")
 	flags.StringVar(&opts.ChromeProfileDir, "chrome-profile-dir", opts.ChromeProfileDir, "chrome profile directory")
 	flags.BoolVar(&opts.BrowserHeadless, "headless", opts.BrowserHeadless, "launch Chrome in headless mode")

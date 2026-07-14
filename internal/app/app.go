@@ -1430,6 +1430,11 @@ func startProxy(processCtx, controlCtx context.Context, opts Options) (startedPr
 	} else if err := validateDelayTimeout(opts.DelayTimeoutMS); err != nil {
 		return startedProxy{}, err
 	}
+	interfaceName, err := resolveMihomoInterfaceName(controlCtx, opts.MihomoInterfaceName)
+	if err != nil {
+		return startedProxy{}, err
+	}
+	opts.MihomoInterfaceName = interfaceName
 	if err := checkLocalPorts(opts.ProxyPort, opts.ControllerPort); err != nil {
 		return startedProxy{}, fmt.Errorf("check local ports: %w", err)
 	}
