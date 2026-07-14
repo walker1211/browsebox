@@ -10,7 +10,7 @@ mihomo:
   # config_path: ~/.config/mihomo/config.yaml
   # mihomo 可执行文件路径；不配置时使用默认 verge-mihomo。
   binary_path: verge-mihomo
-  # 强制临时 mihomo 出站走指定网卡；留空时不强制，常用于避免被主 Clash Verge/TUN 干扰。
+  # 强制临时 mihomo 出站走指定网卡；auto 会在每次启动时选择 macOS 当前默认物理网卡，留空时不强制。
   interface_name: ""
 
 # Chrome 启动配置；只影响 browsebox 启动出来的独立 Chrome。
