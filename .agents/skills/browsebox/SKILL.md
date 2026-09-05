@@ -1,6 +1,6 @@
 ---
 name: browsebox
-description: Use this skill when diagnosing web access through isolated browsebox Chrome sessions, x.com searches, OpenAI web pages, proxy node selection, mihomo/Clash Verge routing checks, or when the user wants browser access without changing the main proxy selector.
+description: "Use only when the user explicitly asks for browsebox or an isolated proxy-routed browser, or when diagnosing proxy-node, mihomo/Clash Verge, X login/search, or browsebox connectivity problems. Do not trigger for ordinary web browsing or OpenAI documentation lookup."
 ---
 
 # browsebox
