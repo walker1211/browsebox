@@ -1,7 +1,8 @@
 # 临时 mihomo 相关配置；browsebox 会从主 Clash Verge/mihomo 读取配置，再启动独立临时实例。
 mihomo:
-  # 主 Clash Verge/mihomo 的 Unix controller socket，用于读取代理组、节点和测速。
-  controller_socket: /tmp/verge/verge-mihomo.sock
+  # 默认自动发现主 Clash Verge/mihomo 的 Unix controller socket。
+  # 需要指定其他控制器时取消注释；显式路径会覆盖自动发现结果。
+  # controller_socket: /path/to/controller.sock
   # 主 controller 的本机 HTTP 地址；留空时使用 controller_socket。
   controller_url: ""
   # Windows named pipe controller；Windows 环境可用它替代 controller_socket。

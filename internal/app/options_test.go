@@ -1,10 +1,56 @@
 package app
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+func TestDiscoverControllerSocketPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are not used on Windows")
+	}
+	dir, err := os.MkdirTemp(".", "browsebox-socket-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	serviceSocket := filepath.Join(dir, "service.sock")
+	tempSocket := filepath.Join(dir, "temp.sock")
+	for _, path := range []string{serviceSocket, tempSocket} {
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	regularFile := filepath.Join(dir, "regular-file")
+	if err := os.WriteFile(regularFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missingSocket := filepath.Join(dir, "missing.sock")
+
+	for _, test := range []struct {
+		name       string
+		candidates []string
+		want       string
+	}{
+		{"service before temp", []string{serviceSocket, tempSocket}, serviceSocket},
+		{"missing service falls back to temp", []string{missingSocket, tempSocket}, tempSocket},
+		{"regular file is not a socket", []string{regularFile, tempSocket}, tempSocket},
+		{"directory is not a socket", []string{dir, tempSocket}, tempSocket},
+		{"no live socket keeps legacy default", []string{missingSocket, regularFile}, legacyControllerSocketPath},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := discoverControllerSocketPath(test.candidates...); got != test.want {
+				t.Fatalf("discoverControllerSocketPath() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 func TestDefaultSourceConfigPathPrefersGenericMihomoConfig(t *testing.T) {
 	home := t.TempDir()

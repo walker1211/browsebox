@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/walker1211/browsebox/internal/browser"
 	"github.com/walker1211/browsebox/internal/mihomo"
@@ -59,7 +60,7 @@ type Options struct {
 // DefaultOptions returns safe macOS-oriented defaults for browsebox.
 func DefaultOptions() Options {
 	opts := Options{
-		ControllerSocket: "/tmp/verge/verge-mihomo.sock",
+		ControllerSocket: defaultControllerSocketPath(),
 		SourceConfigPath: defaultSourceConfigPath(),
 		StateDir:         defaultStateDir(),
 		MihomoBinaryPath: mihomo.DefaultBinaryPath(),
@@ -98,6 +99,26 @@ func DefaultOptions() Options {
 		opts.ControllerPipe = `\\.\pipe\verge-mihomo`
 	}
 	return opts
+}
+
+const legacyControllerSocketPath = "/tmp/verge/verge-mihomo.sock"
+
+func defaultControllerSocketPath() string {
+	return discoverControllerSocketPath(
+		filepath.Join("/var/run/clash-verge-service/users", strconv.Itoa(os.Getuid()), "verge-mihomo.sock"),
+		filepath.Join(os.TempDir(), "verge", "verge-mihomo.sock"),
+		legacyControllerSocketPath,
+	)
+}
+
+func discoverControllerSocketPath(candidates ...string) string {
+	for _, path := range candidates {
+		info, err := os.Stat(path)
+		if err == nil && info.Mode()&os.ModeSocket != 0 {
+			return path
+		}
+	}
+	return legacyControllerSocketPath
 }
 
 func defaultSourceConfigPath() string {
