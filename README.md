@@ -161,7 +161,7 @@ Common flags can be passed after any command:
 
 Common configuration options:
 
-- `--controller-socket <path>`: Unix socket for the main Clash Verge Rev/mihomo controller.
+- `--controller-socket <path>`: Unix socket for the main Clash Verge Rev/mihomo controller. By default, browsebox checks the current user's Clash Verge service socket, `verge/verge-mihomo.sock` under the system temporary directory, then the legacy `/tmp/verge/verge-mihomo.sock` path. An explicit setting overrides discovery.
 - `--config <path>`: source mihomo config. The default prefers `~/.config/mihomo/config.yaml`; if missing, browsebox probes the common macOS Clash Verge Rev config location.
 - `--runtime-dir <path>`: parent directory for temporary runtime directories; if omitted, the system temp directory is used.
 - `--runtime-cache-dir <path>`: mihomo geodata cache directory for reusing files such as `geosite` and `geoip`.

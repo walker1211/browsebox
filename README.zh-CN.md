@@ -161,7 +161,7 @@ cp configs/config.example.yaml configs/config.yaml
 
 常见配置项：
 
-- `--controller-socket <path>`：主 Clash Verge Rev/mihomo 控制器 Unix socket。
+- `--controller-socket <path>`：主 Clash Verge Rev/mihomo 控制器 Unix socket。默认依次探测当前用户的 Clash Verge service socket、系统临时目录下的 `verge/verge-mihomo.sock` 和旧路径 `/tmp/verge/verge-mihomo.sock`；显式配置会覆盖自动发现结果。
 - `--config <path>`：源 mihomo 配置。默认优先使用 `~/.config/mihomo/config.yaml`；不存在时会探测 Clash Verge Rev 的常见 macOS 配置位置。
 - `--runtime-dir <path>`：临时运行目录的父目录；未设置时使用系统临时目录。
 - `--runtime-cache-dir <path>`：mihomo geodata 缓存目录，用于复用 `geosite` / `geoip` 等数据文件。
